@@ -7,7 +7,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /lex ./cmd/lex
 
 FROM scratch
 COPY --from=build /lex /lex
+ENV LEX_ROOT=/data
 ENV LEX_TRANSPORT=http
 ENV LEX_ADDR=:8082
+VOLUME /data
 EXPOSE 8082
 ENTRYPOINT ["/lex", "serve"]

@@ -7,7 +7,7 @@ Lexicon resolver for AI agents. Reads `.cursor/` rules and skills, merges them w
 ```bash
 docker run -d --name lex \
   -p 8082:8082 \
-  -v lex-data:/root/.lex \
+  -v lex-data:/data \
   quay.io/dpopsuev/lex
 ```
 
