@@ -1,0 +1,15 @@
+tasks:
+  build:
+    command: "go build -o ./bin/lex ./cmd/lex"
+
+  test:
+    command: "go test -json ./..."
+    source: go-test
+    depends: [build]
+
+  vet:
+    command: "go vet ./..."
+    source: go-vet
+
+  check:
+    depends: [test, vet]
