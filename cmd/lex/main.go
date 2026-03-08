@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,17 +47,19 @@ var versionCmd = &cobra.Command{
 
 var serveFlags struct {
 	workspaces []string
+	transport  string
+	addr       string
 }
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Start the Lex MCP server (stdio transport)",
-	Long: `Start an MCP server that exposes lexicon tools via stdio.
+	Short: "Start the Lex MCP server (stdio or HTTP)",
+	Long: `Start an MCP server that exposes lexicon tools.
 
-Tools: get_rules, get_skills, add_lexicon, sync_lexicons, list_lexicons, resolve_lexicon.
+  stdio (default): reads/writes JSON-RPC over stdin/stdout.
+  http:            starts a Streamable HTTP server on --addr.
 
-Configure in your MCP client (e.g. Cursor, Claude Code):
-  { "command": "lex", "args": ["serve"] }`,
+Tools: get_rules, get_skills, add_lexicon, sync_lexicons, list_lexicons, resolve_lexicon.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		roots := serveFlags.workspaces
 		if len(roots) == 0 {
@@ -65,6 +68,14 @@ Configure in your MCP client (e.g. Cursor, Claude Code):
 		}
 		reg := registry.New(registry.DefaultRoot())
 		srv := lexmcp.NewServer(reg, roots)
+		if serveFlags.transport == "http" {
+			handler := sdkmcp.NewStreamableHTTPHandler(
+				func(r *http.Request) *sdkmcp.Server { return srv },
+				nil,
+			)
+			fmt.Fprintf(os.Stderr, "lex: listening on %s\n", serveFlags.addr)
+			return http.ListenAndServe(serveFlags.addr, handler)
+		}
 		return srv.Run(context.Background(), &sdkmcp.StdioTransport{})
 	},
 }
@@ -243,6 +254,8 @@ func init() {
 	rootCmd.AddCommand(versionCmd, serveCmd, addCmd, syncCmd, listCmd, removeCmd, resolveCmd, initCmd)
 
 	serveCmd.Flags().StringArrayVar(&serveFlags.workspaces, "workspace", nil, "Workspace root paths (repeatable; defaults to cwd)")
+	serveCmd.Flags().StringVar(&serveFlags.transport, "transport", envOr("LEX_TRANSPORT", "stdio"), "Transport type: stdio, http ($LEX_TRANSPORT)")
+	serveCmd.Flags().StringVar(&serveFlags.addr, "addr", envOr("LEX_ADDR", ":8082"), "Listen address for http transport ($LEX_ADDR)")
 	addCmd.Flags().StringVar(&addFlags.ref, "ref", "", "Branch or tag to clone")
 	addCmd.Flags().IntVar(&addFlags.priority, "priority", 25, "Priority (higher wins on conflict)")
 	resolveCmd.Flags().StringVar(&resolveFlags.path, "path", "", "Workspace root path (defaults to cwd)")

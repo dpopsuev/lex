@@ -14,7 +14,12 @@ import (
 func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 	srv := sdkmcp.NewServer(
 		&sdkmcp.Implementation{Name: "lex", Version: "0.3.0"},
-		nil,
+		&sdkmcp.ServerOptions{
+			Instructions: "Lex is a lexicon resolver for AI agents. " +
+				"It reads .cursor/ rules and skills from local workspaces and merges them with remote lexicon repositories " +
+				"using priority-based cascading. Use resolve_lexicon for smart routing (glob and label matching), " +
+				"add_lexicon to register remote sources, and get_rules/get_skills for direct access.",
+		},
 	)
 	h := &handler{svc: protocol.New(reg, workspaceRoots)}
 
