@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/dpopsuev/lex/internal/cursor"
@@ -49,6 +50,26 @@ func (s *Service) RemoveLexicon(ctx context.Context, url string) error {
 
 func (s *Service) Resolve(ctx context.Context, path string, opts lexicon.ResolveOpts) (*lexicon.Resolution, error) {
 	return lexicon.Resolve(ctx, s.reg, s.resolvePath(path), opts)
+}
+
+// InspectLexicon returns discovered artifacts (rules, skills, templates)
+// from registered lexicon sources. If url is empty, all sources are included.
+func (s *Service) InspectLexicon(_ context.Context, url string) ([]registry.Artifact, error) {
+	sources, err := s.reg.Load()
+	if err != nil {
+		return nil, err
+	}
+	var artifacts []registry.Artifact
+	for _, src := range sources {
+		if url != "" && src.URL != url {
+			continue
+		}
+		artifacts = append(artifacts, registry.DiscoverArtifacts(src.LocalPath, src.URL, src.Priority)...)
+	}
+	if url != "" && len(artifacts) == 0 {
+		return nil, fmt.Errorf("lexicon source not registered: %s", url)
+	}
+	return artifacts, nil
 }
 
 func (s *Service) resolvePath(path string) string {

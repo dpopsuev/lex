@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /lex ./cmd/lex
 
 FROM alpine:latest
-RUN apk add --no-cache git ca-certificates
+RUN apk add --no-cache git
 COPY --from=build /lex /lex
 ENV LEX_ROOT=/data
 ENV LEX_TRANSPORT=http

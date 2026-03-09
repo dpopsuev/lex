@@ -58,6 +58,11 @@ func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 		Description: "Remove a registered lexicon source by URL. Deletes the source entry and prunes the cloned directory.",
 	}, noOut(h.handleRemoveLexicon))
 
+	sdkmcp.AddTool(srv, &sdkmcp.Tool{
+		Name:        "inspect_lexicon",
+		Description: "List all rules, skills, and templates from registered lexicon sources. If url is provided, filters to that source. If omitted, returns artifacts from all sources.",
+	}, noOut(h.handleInspectLexicon))
+
 	return srv
 }
 
@@ -156,6 +161,18 @@ func (h *handler) handleRemoveLexicon(ctx context.Context, _ *sdkmcp.CallToolReq
 		return nil, nil, fmt.Errorf("remove lexicon: %w", err)
 	}
 	return jsonResult(map[string]string{"removed": in.URL})
+}
+
+type inspectLexiconInput struct {
+	URL string `json:"url,omitempty"`
+}
+
+func (h *handler) handleInspectLexicon(ctx context.Context, _ *sdkmcp.CallToolRequest, in inspectLexiconInput) (*sdkmcp.CallToolResult, any, error) {
+	artifacts, err := h.svc.InspectLexicon(ctx, in.URL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect lexicon: %w", err)
+	}
+	return jsonResult(artifacts)
 }
 
 // --- helpers ---
