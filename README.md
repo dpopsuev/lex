@@ -6,10 +6,6 @@
 
 Lexicon resolver for AI agents. Reads `.cursor/` rules and skills, merges them with remote lexicon repositories using priority-based cascading and smart routing — via CLI or MCP server.
 
-## The Problem
-
-AI agents need consistent rules, conventions, and skills across workspaces. Without a resolver, rules are scattered in local `.cursor/` directories, team conventions can't be shared, and there's no way to override or cascade. Lex solves this by providing a unified resolution layer.
-
 ## Quick Start
 
 ### Container (recommended)
@@ -58,13 +54,25 @@ lex serve --transport http            # HTTP on :8082
 
 ## Workflow
 
-**User:** I just cloned a new project. Link my private lexicon and show me what rules apply.
+> **You:** Which developer best practices do we have loaded, and from which lexicon?
+>
+> **Agent:** *(calls `resolve_lexicon`)* You have 12 rules active. 4 come from your local `.cursor/rules/` (priority 100) — project standards, testing methodology, deterministic-first, and security analysis. The other 8 come from your remote lexicon at `github.com/dpopsuev/lexicon` (priority 50) — Go conventions, reviewability-first, commit standards, and more. Local rules win on any overlap.
 
-**Agent:** Adds the lexicon via `manage_lexicons` (action: add), then `resolve_lexicon` for the workspace path. Explains which rules matched from local `.cursor/` vs the remote lexicon, and how priority resolved any overlaps.
+> **You:** Add my team's shared lexicon so every project picks it up.
+>
+> **Agent:** *(calls `manage_lexicons` with action `add`, url `https://github.com/myorg/lexicon`, priority 60)* Done. It's registered at priority 60, so it overrides the default lexicon (25) but your local `.cursor/` rules (100) still take precedence. Run `resolve_lexicon` on any workspace to see the merged result.
 
-**User:** Show me only the security rules for Go files.
+> **You:** I'm editing `internal/auth/handler.go` — are there security-specific rules I should know about?
+>
+> **Agent:** *(calls `resolve_lexicon` with active_file and labels `["security"]`)* Yes, 2 rules matched: `security-analysis.mdc` from your local workspace (OWASP Top 10 checklist for every trust-boundary change) and `secure-defaults.mdc` from your remote lexicon (input validation, no hardcoded secrets). Both apply to `*.go` files.
 
-**Agent:** Uses `resolve_lexicon` with `labels: ["security"]` and `active_file: "internal/auth/handler.go"` (or another `.go` path). Smart routing returns only rules whose globs match `*.go` and whose labels intersect with `security`.
+> **You:** That remote lexicon is stale. Sync it.
+>
+> **Agent:** *(calls `manage_lexicons` with action `sync`)* All sources re-fetched. The remote lexicon pulled 3 new rules since last sync.
+
+## The Problem
+
+AI agents need consistent rules, conventions, and skills across workspaces. Without a resolver, rules are scattered in local `.cursor/` directories, team conventions can't be shared, and there's no way to override or cascade. Lex solves this by providing a unified resolution layer.
 
 ## Core Concepts
 
@@ -121,98 +129,26 @@ routing:
 
 ## LLM Chatbox Examples
 
-These show what an LLM agent sends over MCP. Copy-paste into any chat to see them in action.
-
-**Resolve all rules and skills for a workspace:**
+Quick reference for what the agent sends over MCP. The Workflow section above shows full conversations.
 
 ```json
+// What rules/skills apply to this workspace?
 { "tool": "resolve_lexicon", "arguments": { "path": "/workspace/myproject" } }
-```
 
-**Get only rules (no skills):**
+// Only security rules for Go files
+{ "tool": "resolve_lexicon", "arguments": { "path": "/workspace/myproject", "labels": ["security"], "active_file": "internal/auth/handler.go" } }
 
-```json
-{ "tool": "resolve_lexicon", "arguments": {
-    "path": "/workspace/myproject", "type": "rules"
-}}
-```
+// Add a remote lexicon
+{ "tool": "manage_lexicons", "arguments": { "action": "add", "url": "https://github.com/myorg/lexicon", "priority": 60 } }
 
-**Get only local workspace skills:**
-
-```json
-{ "tool": "resolve_lexicon", "arguments": {
-    "path": "/workspace/myproject", "source": "local", "type": "skills"
-}}
-```
-
-**Resolve with label filtering:**
-
-```json
-{ "tool": "resolve_lexicon", "arguments": {
-    "path": "/workspace/myproject", "labels": ["security", "go"]
-}}
-```
-
-**Resolve for a specific file (glob-based routing):**
-
-```json
-{ "tool": "resolve_lexicon", "arguments": {
-    "path": "/workspace/myproject", "active_file": "internal/auth/handler.go"
-}}
-```
-
-**List all artifacts from registered sources:**
-
-```json
-{ "tool": "inspect_lexicon" }
-```
-
-**Register a remote lexicon repository:**
-
-```json
-{ "tool": "manage_lexicons", "arguments": {
-    "action": "add", "url": "https://github.com/org/lexicon", "priority": 60
-}}
-```
-
-**List registered sources:**
-
-```json
+// List registered sources
 { "tool": "manage_lexicons", "arguments": { "action": "list" } }
-```
 
-**Disable a source without removing it:**
-
-```json
-{ "tool": "manage_lexicons", "arguments": {
-    "action": "disable", "url": "https://github.com/org/lexicon"
-}}
-```
-
-**Re-enable a disabled source:**
-
-```json
-{ "tool": "manage_lexicons", "arguments": {
-    "action": "enable", "url": "https://github.com/org/lexicon"
-}}
-```
-
-**Sync all sources (re-fetch):**
-
-```json
+// Sync all sources (re-fetch)
 { "tool": "manage_lexicons", "arguments": { "action": "sync" } }
-```
 
-**Read global config:**
-
-```json
-{ "tool": "config", "arguments": { "action": "get" } }
-```
-
-**Set a config value:**
-
-```json
-{ "tool": "config", "arguments": { "action": "set", "key": "default_priority", "value": "40" } }
+// List everything a source provides
+{ "tool": "inspect_lexicon" }
 ```
 
 ## Configuration
