@@ -59,7 +59,7 @@ var serveCmd = &cobra.Command{
   stdio (default): reads/writes JSON-RPC over stdin/stdout.
   http:            starts a Streamable HTTP server on --addr.
 
-Tools: get_rules, get_skills, add_lexicon, sync_lexicons, list_lexicons, resolve_lexicon.`,
+Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		roots := serveFlags.workspaces
 		if len(roots) == 0 {

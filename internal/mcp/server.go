@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/dpopsuev/lex/internal/lexicon"
 	"github.com/dpopsuev/lex/internal/protocol"
@@ -18,45 +19,15 @@ func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 			Instructions: "Lex is a lexicon resolver for AI agents. " +
 				"It reads .cursor/ rules and skills from local workspaces and merges them with remote lexicon repositories " +
 				"using priority-based cascading. Use resolve_lexicon for smart routing (glob and label matching), " +
-				"add_lexicon to register remote sources, and get_rules/get_skills for direct access.",
+				"manage_lexicons to register and manage remote sources.",
 		},
 	)
 	h := &handler{svc: protocol.New(reg, workspaceRoots)}
 
 	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "get_rules",
-		Description: "Return all .cursor/rules/*.mdc rules for a workspace root, with frontmatter metadata and body content. Zero-config: reads existing Cursor rules directly.",
-	}, noOut(h.handleGetRules))
-
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "get_skills",
-		Description: "Return all .cursor/skills/*/SKILL.md skills for a workspace root, with frontmatter metadata and body content. Zero-config: reads existing Cursor skills directly.",
-	}, noOut(h.handleGetSkills))
-
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "add_lexicon",
-		Description: "Register a remote lexicon repository (git URL). Shallow-clones the repo and indexes all rules, templates, and skills found inside.",
-	}, noOut(h.handleAddLexicon))
-
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "sync_lexicons",
-		Description: "Re-fetch all registered lexicon repositories to get the latest versions.",
-	}, noOut(h.handleSyncLexicons))
-
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "list_lexicons",
-		Description: "List all registered lexicon sources with their URLs, priorities, and sync timestamps.",
-	}, noOut(h.handleListLexicons))
-
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{
 		Name:        "resolve_lexicon",
-		Description: "Resolve effective rules and skills by merging local .cursor/ with remote lexicons. Higher priority wins on name conflicts. Supports path and label filters.",
+		Description: "Resolve effective rules and skills by merging local .cursor/ with remote lexicons. Higher priority wins on name conflicts. Supports path and label filters. Use source=local for workspace-only rules/skills, type=rules or type=skills to filter by artifact type.",
 	}, noOut(h.handleResolveLexicon))
-
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "remove_lexicon",
-		Description: "Remove a registered lexicon source by URL. Deletes the source entry and prunes the cloned directory.",
-	}, noOut(h.handleRemoveLexicon))
 
 	sdkmcp.AddTool(srv, &sdkmcp.Tool{
 		Name:        "inspect_lexicon",
@@ -64,9 +35,9 @@ func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 	}, noOut(h.handleInspectLexicon))
 
 	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "cursor_bridge_rule",
-		Description: "Install the lex-bridge.mdc Cursor rule that triggers resolve_lexicon at session start. Use global=true to install in ~/.cursor/rules/ (all workspaces) or provide a workspace path.",
-	}, noOut(h.handleCursorBridgeRule))
+		Name:        "manage_lexicons",
+		Description: "Manage lexicon sources. Actions: add (register remote repo), remove (delete source), enable/disable (toggle without removing), sync (re-fetch all), list (show sources with URLs, priorities, status).",
+	}, noOut(h.handleManageLexicons))
 
 	sdkmcp.AddTool(srv, &sdkmcp.Tool{
 		Name:        "get_config",
@@ -77,16 +48,6 @@ func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 		Name:        "set_config",
 		Description: "Set a global config value. Keys: default_priority, cache_dir, enabled, labels (comma-separated).",
 	}, noOut(h.handleSetConfig))
-
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "enable_source",
-		Description: "Enable a disabled lexicon source by URL without re-adding it.",
-	}, noOut(h.handleEnableSource))
-
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "disable_source",
-		Description: "Disable a lexicon source by URL without removing it.",
-	}, noOut(h.handleDisableSource))
 
 	return srv
 }
@@ -158,9 +119,46 @@ type resolveLexiconInput struct {
 	Filter     string   `json:"filter,omitempty"`
 	ActiveFile string   `json:"active_file,omitempty"`
 	Context    []string `json:"context,omitempty"`
+	Source     string   `json:"source,omitempty"` // local|remote|merged (default: merged)
+	Type       string   `json:"type,omitempty"`   // rules|skills|all (default: all)
 }
 
 func (h *handler) handleResolveLexicon(ctx context.Context, _ *sdkmcp.CallToolRequest, in resolveLexiconInput) (*sdkmcp.CallToolResult, any, error) {
+	source := strings.ToLower(strings.TrimSpace(in.Source))
+	typ := strings.ToLower(strings.TrimSpace(in.Type))
+	if typ == "" {
+		typ = "all"
+	}
+
+	// Local-only: workspace .cursor/ rules/skills via GetRules/GetSkills
+	if source == "local" {
+		switch typ {
+		case "rules":
+			rules, err := h.svc.GetRules(ctx, in.Path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("read rules: %w", err)
+			}
+			return jsonResult(rules)
+		case "skills":
+			skills, err := h.svc.GetSkills(ctx, in.Path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("read skills: %w", err)
+			}
+			return jsonResult(skills)
+		default:
+			rules, err := h.svc.GetRules(ctx, in.Path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("read rules: %w", err)
+			}
+			skills, err := h.svc.GetSkills(ctx, in.Path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("read skills: %w", err)
+			}
+			return jsonResult(map[string]any{"rules": rules, "skills": skills})
+		}
+	}
+
+	// Merged or remote: full resolve, then post-filter by Type
 	opts := lexicon.ResolveOpts{
 		PathFilter: in.Filter,
 		Labels:     in.Labels,
@@ -171,7 +169,95 @@ func (h *handler) handleResolveLexicon(ctx context.Context, _ *sdkmcp.CallToolRe
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve: %w", err)
 	}
+
+	if source == "remote" {
+		res = filterBySource(res, false)
+	}
+	if typ == "rules" {
+		return jsonResult(map[string]any{"rules": res.Rules})
+	}
+	if typ == "skills" {
+		return jsonResult(map[string]any{"skills": res.Skills})
+	}
 	return jsonResult(res)
+}
+
+func filterBySource(res *lexicon.Resolution, keepLocal bool) *lexicon.Resolution {
+	out := &lexicon.Resolution{}
+	for _, r := range res.Rules {
+		if (keepLocal && r.Source == "local") || (!keepLocal && r.Source != "local") {
+			out.Rules = append(out.Rules, r)
+		}
+	}
+	for _, s := range res.Skills {
+		if (keepLocal && s.Source == "local") || (!keepLocal && s.Source != "local") {
+			out.Skills = append(out.Skills, s)
+		}
+	}
+	return out
+}
+
+type manageLexiconsInput struct {
+	Action   string `json:"action"` // add|remove|enable|disable|sync|list
+	URL      string `json:"url,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	Priority int    `json:"priority,omitempty"`
+}
+
+func (h *handler) handleManageLexicons(ctx context.Context, _ *sdkmcp.CallToolRequest, in manageLexiconsInput) (*sdkmcp.CallToolResult, any, error) {
+	switch in.Action {
+	case "add":
+		if in.URL == "" {
+			return nil, nil, fmt.Errorf("url is required for add")
+		}
+		priority := in.Priority
+		if priority == 0 {
+			priority = 25
+		}
+		src, err := h.svc.AddLexicon(ctx, in.URL, in.Ref, priority)
+		if err != nil {
+			return nil, nil, fmt.Errorf("add lexicon: %w", err)
+		}
+		return jsonResult(src)
+	case "remove":
+		if in.URL == "" {
+			return nil, nil, fmt.Errorf("url is required for remove")
+		}
+		if err := h.svc.RemoveLexicon(ctx, in.URL); err != nil {
+			return nil, nil, fmt.Errorf("remove lexicon: %w", err)
+		}
+		return jsonResult(map[string]string{"removed": in.URL})
+	case "enable":
+		if in.URL == "" {
+			return nil, nil, fmt.Errorf("url is required for enable")
+		}
+		if err := h.svc.EnableSource(ctx, in.URL); err != nil {
+			return nil, nil, fmt.Errorf("enable source: %w", err)
+		}
+		return jsonResult(map[string]string{"enabled": in.URL})
+	case "disable":
+		if in.URL == "" {
+			return nil, nil, fmt.Errorf("url is required for disable")
+		}
+		if err := h.svc.DisableSource(ctx, in.URL); err != nil {
+			return nil, nil, fmt.Errorf("disable source: %w", err)
+		}
+		return jsonResult(map[string]string{"disabled": in.URL})
+	case "sync":
+		n, err := h.svc.SyncLexicons(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("sync: %w", err)
+		}
+		return jsonResult(map[string]any{"synced": n})
+	case "list":
+		sources, err := h.svc.ListSources(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list: %w", err)
+		}
+		return jsonResult(sources)
+	default:
+		return nil, nil, fmt.Errorf("unknown action %q; use: add, remove, enable, disable, sync, list", in.Action)
+	}
 }
 
 type removeLexiconInput struct {

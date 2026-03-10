@@ -58,18 +58,11 @@ lex serve --transport http            # HTTP on :8082
 
 | Tool | Description |
 |---|---|
-| `resolve_lexicon` | Smart-routed rules + skills (glob and label matching) |
-| `get_rules` | Rules from local `.cursor/` workspace |
-| `get_skills` | Skills from local `.cursor/` workspace |
-| `add_lexicon` | Register a remote lexicon repository |
-| `remove_lexicon` | Remove a registered lexicon source |
-| `sync_lexicons` | Re-fetch all registered lexicons |
-| `list_lexicons` | List registered lexicon sources |
-| `inspect_lexicon` | List rules, skills, and templates from registered sources |
-| `get_config` | Return current global configuration |
-| `set_config` | Set a global configuration value |
-| `enable_source` | Enable a disabled lexicon source |
-| `disable_source` | Disable a source without removing it |
+| `resolve_lexicon` | Resolve rules + skills from local and remote lexicons. Use `source=local\|remote\|merged`, `type=rules\|skills\|all`. |
+| `inspect_lexicon` | List rules, skills, and templates from registered sources. |
+| `manage_lexicons` | Manage sources: `action=add\|remove\|enable\|disable\|sync\|list`. |
+| `get_config` | Return current global configuration. |
+| `set_config` | Set a global configuration value. |
 
 ## Configuration
 
