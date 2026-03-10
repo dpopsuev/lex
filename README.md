@@ -127,30 +127,6 @@ routing:
 | `manage_lexicons` | Manage sources: add, remove, enable, disable, sync, list. |
 | `config` | Get or set global configuration. Actions: `get`, `set`. Keys: default_priority, cache_dir, enabled, labels. |
 
-## LLM Chatbox Examples
-
-Quick reference for what the agent sends over MCP. The Workflow section above shows full conversations.
-
-```json
-// What rules/skills apply to this workspace?
-{ "tool": "resolve_lexicon", "arguments": { "path": "/workspace/myproject" } }
-
-// Only security rules for Go files
-{ "tool": "resolve_lexicon", "arguments": { "path": "/workspace/myproject", "labels": ["security"], "active_file": "internal/auth/handler.go" } }
-
-// Add a remote lexicon
-{ "tool": "manage_lexicons", "arguments": { "action": "add", "url": "https://github.com/myorg/lexicon", "priority": 60 } }
-
-// List registered sources
-{ "tool": "manage_lexicons", "arguments": { "action": "list" } }
-
-// Sync all sources (re-fetch)
-{ "tool": "manage_lexicons", "arguments": { "action": "sync" } }
-
-// List everything a source provides
-{ "tool": "inspect_lexicon" }
-```
-
 ## Configuration
 
 Lex uses a DNF-inspired layered configuration system:
