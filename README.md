@@ -64,6 +64,102 @@ lex serve --transport http            # HTTP on :8082
 | `get_config` | Return current global configuration. |
 | `set_config` | Set a global configuration value. |
 
+## LLM Chatbox Examples
+
+These show what an LLM agent sends over MCP. Copy-paste into any chat to see them in action.
+
+**Resolve all rules and skills for a workspace:**
+
+```json
+{ "tool": "resolve_lexicon", "arguments": { "path": "/workspace/myproject" } }
+```
+
+**Get only rules (no skills):**
+
+```json
+{ "tool": "resolve_lexicon", "arguments": {
+    "path": "/workspace/myproject", "type": "rules"
+}}
+```
+
+**Get only local workspace skills:**
+
+```json
+{ "tool": "resolve_lexicon", "arguments": {
+    "path": "/workspace/myproject", "source": "local", "type": "skills"
+}}
+```
+
+**Resolve with label filtering:**
+
+```json
+{ "tool": "resolve_lexicon", "arguments": {
+    "path": "/workspace/myproject", "labels": ["security", "go"]
+}}
+```
+
+**Resolve for a specific file (glob-based routing):**
+
+```json
+{ "tool": "resolve_lexicon", "arguments": {
+    "path": "/workspace/myproject", "active_file": "internal/auth/handler.go"
+}}
+```
+
+**List all artifacts from registered sources:**
+
+```json
+{ "tool": "inspect_lexicon" }
+```
+
+**Register a remote lexicon repository:**
+
+```json
+{ "tool": "manage_lexicons", "arguments": {
+    "action": "add", "url": "https://github.com/org/lexicon", "priority": 60
+}}
+```
+
+**List registered sources:**
+
+```json
+{ "tool": "manage_lexicons", "arguments": { "action": "list" } }
+```
+
+**Disable a source without removing it:**
+
+```json
+{ "tool": "manage_lexicons", "arguments": {
+    "action": "disable", "url": "https://github.com/org/lexicon"
+}}
+```
+
+**Re-enable a disabled source:**
+
+```json
+{ "tool": "manage_lexicons", "arguments": {
+    "action": "enable", "url": "https://github.com/org/lexicon"
+}}
+```
+
+**Sync all sources (re-fetch):**
+
+```json
+{ "tool": "manage_lexicons", "arguments": { "action": "sync" } }
+```
+
+**Read global config:**
+
+```json
+{ "tool": "get_config" }
+```
+
+**Set a config value:**
+
+```json
+{ "tool": "set_config", "arguments": { "key": "default_priority", "value": "40" } }
+```
+
 ## Configuration
 
 Lex uses a DNF-inspired layered configuration system:

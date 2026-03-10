@@ -14,7 +14,7 @@ import (
 
 func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 	srv := sdkmcp.NewServer(
-		&sdkmcp.Implementation{Name: "lex", Version: "0.1.0"},
+		&sdkmcp.Implementation{Name: "lex", Version: "0.2.0"},
 		&sdkmcp.ServerOptions{
 			Instructions: "Lex is a lexicon resolver for AI agents. " +
 				"It reads .cursor/ rules and skills from local workspaces and merges them with remote lexicon repositories " +
