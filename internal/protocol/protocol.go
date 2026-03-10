@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dpopsuev/lex/internal/config"
 	"github.com/dpopsuev/lex/internal/cursor"
 	"github.com/dpopsuev/lex/internal/lexicon"
 	"github.com/dpopsuev/lex/internal/registry"
@@ -48,6 +49,33 @@ func (s *Service) RemoveLexicon(ctx context.Context, url string) error {
 	return lexicon.Remove(ctx, s.reg, url)
 }
 
+func (s *Service) EnableSource(_ context.Context, url string) error {
+	return s.reg.EnableSource(url)
+}
+
+func (s *Service) DisableSource(_ context.Context, url string) error {
+	return s.reg.DisableSource(url)
+}
+
+func (s *Service) SetSourcePriority(_ context.Context, url string, priority int) error {
+	return s.reg.SetSourcePriority(url, priority)
+}
+
+func (s *Service) GetConfig(_ context.Context) (*config.Config, error) {
+	return config.Load(s.reg.Root())
+}
+
+func (s *Service) SetConfig(_ context.Context, key, value string) error {
+	cfg, err := config.Load(s.reg.Root())
+	if err != nil {
+		return err
+	}
+	if err := cfg.SetConfig(key, value); err != nil {
+		return err
+	}
+	return cfg.Save(s.reg.Root())
+}
+
 func (s *Service) Resolve(ctx context.Context, path string, opts lexicon.ResolveOpts) (*lexicon.Resolution, error) {
 	return lexicon.Resolve(ctx, s.reg, s.resolvePath(path), opts)
 }
@@ -61,6 +89,9 @@ func (s *Service) InspectLexicon(_ context.Context, url string) ([]registry.Arti
 	}
 	var artifacts []registry.Artifact
 	for _, src := range sources {
+		if !src.Enabled {
+			continue
+		}
 		if url != "" && src.URL != url {
 			continue
 		}
@@ -70,6 +101,15 @@ func (s *Service) InspectLexicon(_ context.Context, url string) ([]registry.Arti
 		return nil, fmt.Errorf("lexicon source not registered: %s", url)
 	}
 	return artifacts, nil
+}
+
+// InstallBridgeRule writes the lex-bridge.mdc Cursor rule.
+// If global is true, writes to ~/.cursor/rules/. Otherwise writes to <path>/.cursor/rules/.
+func (s *Service) InstallBridgeRule(_ context.Context, path string, global bool) (*cursor.BridgeRuleResult, error) {
+	if global {
+		return cursor.WriteBridgeRule(cursor.GlobalCursorRulesDir(), true)
+	}
+	return cursor.WriteBridgeRule(s.resolvePath(path), false)
 }
 
 func (s *Service) resolvePath(path string) string {

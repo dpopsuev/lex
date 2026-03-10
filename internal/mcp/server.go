@@ -13,7 +13,7 @@ import (
 
 func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 	srv := sdkmcp.NewServer(
-		&sdkmcp.Implementation{Name: "lex", Version: "0.3.0"},
+		&sdkmcp.Implementation{Name: "lex", Version: "0.1.0"},
 		&sdkmcp.ServerOptions{
 			Instructions: "Lex is a lexicon resolver for AI agents. " +
 				"It reads .cursor/ rules and skills from local workspaces and merges them with remote lexicon repositories " +
@@ -62,6 +62,31 @@ func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 		Name:        "inspect_lexicon",
 		Description: "List all rules, skills, and templates from registered lexicon sources. If url is provided, filters to that source. If omitted, returns artifacts from all sources.",
 	}, noOut(h.handleInspectLexicon))
+
+	sdkmcp.AddTool(srv, &sdkmcp.Tool{
+		Name:        "cursor_bridge_rule",
+		Description: "Install the lex-bridge.mdc Cursor rule that triggers resolve_lexicon at session start. Use global=true to install in ~/.cursor/rules/ (all workspaces) or provide a workspace path.",
+	}, noOut(h.handleCursorBridgeRule))
+
+	sdkmcp.AddTool(srv, &sdkmcp.Tool{
+		Name:        "get_config",
+		Description: "Return current global config (default_priority, cache_dir, enabled, labels).",
+	}, noOut(h.handleGetConfig))
+
+	sdkmcp.AddTool(srv, &sdkmcp.Tool{
+		Name:        "set_config",
+		Description: "Set a global config value. Keys: default_priority, cache_dir, enabled, labels (comma-separated).",
+	}, noOut(h.handleSetConfig))
+
+	sdkmcp.AddTool(srv, &sdkmcp.Tool{
+		Name:        "enable_source",
+		Description: "Enable a disabled lexicon source by URL without re-adding it.",
+	}, noOut(h.handleEnableSource))
+
+	sdkmcp.AddTool(srv, &sdkmcp.Tool{
+		Name:        "disable_source",
+		Description: "Disable a lexicon source by URL without removing it.",
+	}, noOut(h.handleDisableSource))
 
 	return srv
 }
@@ -173,6 +198,70 @@ func (h *handler) handleInspectLexicon(ctx context.Context, _ *sdkmcp.CallToolRe
 		return nil, nil, fmt.Errorf("inspect lexicon: %w", err)
 	}
 	return jsonResult(artifacts)
+}
+
+type cursorBridgeRuleInput struct {
+	Path   string `json:"path,omitempty"`
+	Global bool   `json:"global,omitempty"`
+}
+
+func (h *handler) handleCursorBridgeRule(ctx context.Context, _ *sdkmcp.CallToolRequest, in cursorBridgeRuleInput) (*sdkmcp.CallToolResult, any, error) {
+	result, err := h.svc.InstallBridgeRule(ctx, in.Path, in.Global)
+	if err != nil {
+		return nil, nil, fmt.Errorf("install bridge rule: %w", err)
+	}
+	return jsonResult(result)
+}
+
+func (h *handler) handleGetConfig(ctx context.Context, _ *sdkmcp.CallToolRequest, _ emptyInput) (*sdkmcp.CallToolResult, any, error) {
+	cfg, err := h.svc.GetConfig(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get config: %w", err)
+	}
+	return jsonResult(cfg)
+}
+
+type setConfigInput struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+func (h *handler) handleSetConfig(ctx context.Context, _ *sdkmcp.CallToolRequest, in setConfigInput) (*sdkmcp.CallToolResult, any, error) {
+	if in.Key == "" {
+		return nil, nil, fmt.Errorf("key is required")
+	}
+	if err := h.svc.SetConfig(ctx, in.Key, in.Value); err != nil {
+		return nil, nil, fmt.Errorf("set config: %w", err)
+	}
+	return jsonResult(map[string]string{"ok": "config updated"})
+}
+
+type enableSourceInput struct {
+	URL string `json:"url"`
+}
+
+func (h *handler) handleEnableSource(ctx context.Context, _ *sdkmcp.CallToolRequest, in enableSourceInput) (*sdkmcp.CallToolResult, any, error) {
+	if in.URL == "" {
+		return nil, nil, fmt.Errorf("url is required")
+	}
+	if err := h.svc.EnableSource(ctx, in.URL); err != nil {
+		return nil, nil, fmt.Errorf("enable source: %w", err)
+	}
+	return jsonResult(map[string]string{"enabled": in.URL})
+}
+
+type disableSourceInput struct {
+	URL string `json:"url"`
+}
+
+func (h *handler) handleDisableSource(ctx context.Context, _ *sdkmcp.CallToolRequest, in disableSourceInput) (*sdkmcp.CallToolResult, any, error) {
+	if in.URL == "" {
+		return nil, nil, fmt.Errorf("url is required")
+	}
+	if err := h.svc.DisableSource(ctx, in.URL); err != nil {
+		return nil, nil, fmt.Errorf("disable source: %w", err)
+	}
+	return jsonResult(map[string]string{"disabled": in.URL})
 }
 
 // --- helpers ---

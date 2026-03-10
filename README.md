@@ -62,8 +62,49 @@ lex serve --transport http            # HTTP on :8082
 | `get_rules` | Rules from local `.cursor/` workspace |
 | `get_skills` | Skills from local `.cursor/` workspace |
 | `add_lexicon` | Register a remote lexicon repository |
+| `remove_lexicon` | Remove a registered lexicon source |
 | `sync_lexicons` | Re-fetch all registered lexicons |
 | `list_lexicons` | List registered lexicon sources |
+| `inspect_lexicon` | List rules, skills, and templates from registered sources |
+| `get_config` | Return current global configuration |
+| `set_config` | Set a global configuration value |
+| `enable_source` | Enable a disabled lexicon source |
+| `disable_source` | Disable a source without removing it |
+
+## Configuration
+
+Lex uses a DNF-inspired layered configuration system:
+
+### Global config: `~/.lex/config.yaml`
+
+```yaml
+default_priority: 50
+cache_dir: ~/.lex/cache
+enabled: true
+```
+
+### Per-source config: `~/.lex/repos.d/*.yaml`
+
+Each registered lexicon source gets its own config file:
+
+```yaml
+url: https://github.com/org/lexicon
+enabled: true
+priority: 50
+ref: main
+labels:
+  - production
+```
+
+### Source management
+
+```bash
+lex add https://github.com/org/lexicon    # register a source
+lex disable https://github.com/org/lexicon # disable without removing
+lex enable https://github.com/org/lexicon  # re-enable
+lex config                                 # show global config
+lex config set default_priority 40         # set a config value
+```
 
 ## Smart routing
 

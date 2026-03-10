@@ -202,6 +202,63 @@ var removeCmd = &cobra.Command{
 	},
 }
 
+var configCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Show or set global config",
+	Long:  `Show global config from ~/.lex/config.yaml, or use 'config set KEY VALUE' to update.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := newService()
+		cfg, err := svc.GetConfig(cmd.Context())
+		if err != nil {
+			return err
+		}
+		return printJSON(cfg)
+	},
+}
+
+var configSetCmd = &cobra.Command{
+	Use:   "set [key] [value]",
+	Short: "Set a config value",
+	Long:  `Set a global config value. Keys: default_priority, cache_dir, enabled, labels (comma-separated).`,
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := newService()
+		if err := svc.SetConfig(cmd.Context(), args[0], args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("Set %s = %s\n", args[0], args[1])
+		return nil
+	},
+}
+
+var enableCmd = &cobra.Command{
+	Use:   "enable <url>",
+	Short: "Enable a disabled lexicon source",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := newService()
+		if err := svc.EnableSource(cmd.Context(), args[0]); err != nil {
+			return err
+		}
+		fmt.Printf("Enabled: %s\n", args[0])
+		return nil
+	},
+}
+
+var disableCmd = &cobra.Command{
+	Use:   "disable <url>",
+	Short: "Disable a lexicon source without removing it",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := newService()
+		if err := svc.DisableSource(cmd.Context(), args[0]); err != nil {
+			return err
+		}
+		fmt.Printf("Disabled: %s\n", args[0])
+		return nil
+	},
+}
+
 var initCmd = &cobra.Command{
 	Use:   "init [path]",
 	Short: "Scaffold a new lexicon repository",
@@ -250,8 +307,41 @@ routing: []
 	return nil
 }
 
+var bridgeFlags struct {
+	global bool
+}
+
+var bridgeCmd = &cobra.Command{
+	Use:   "cursor-bridge-rule [path]",
+	Short: "Install the lex-bridge.mdc Cursor rule",
+	Long: `Write the lex-bridge.mdc rule that triggers resolve_lexicon at session start.
+
+  --global: install to ~/.cursor/rules/ (applies to all workspaces)
+  [path]:   install to <path>/.cursor/rules/ (defaults to cwd)`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := newService()
+		path := ""
+		if len(args) > 0 {
+			path = args[0]
+		}
+		result, err := svc.InstallBridgeRule(cmd.Context(), path, bridgeFlags.global)
+		if err != nil {
+			return err
+		}
+		if result.Created {
+			fmt.Printf("Created %s\n", result.Path)
+		} else {
+			fmt.Printf("Already exists: %s\n", result.Path)
+		}
+		return nil
+	},
+}
+
 func init() {
-	rootCmd.AddCommand(versionCmd, serveCmd, addCmd, syncCmd, listCmd, removeCmd, resolveCmd, initCmd)
+	rootCmd.AddCommand(versionCmd, serveCmd, addCmd, syncCmd, listCmd, removeCmd, resolveCmd, initCmd, bridgeCmd, configCmd, enableCmd, disableCmd)
+	configCmd.AddCommand(configSetCmd)
+	bridgeCmd.Flags().BoolVar(&bridgeFlags.global, "global", false, "Install to ~/.cursor/rules/ (all workspaces)")
 
 	serveCmd.Flags().StringArrayVar(&serveFlags.workspaces, "workspace", nil, "Workspace root paths (repeatable; defaults to cwd)")
 	serveCmd.Flags().StringVar(&serveFlags.transport, "transport", envOr("LEX_TRANSPORT", "stdio"), "Transport type: stdio, http ($LEX_TRANSPORT)")

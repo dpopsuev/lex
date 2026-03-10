@@ -2,9 +2,9 @@ package lexicon
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dpopsuev/lex/internal/registry"
@@ -32,7 +32,8 @@ func setupTestRegistry(t *testing.T) *registry.Registry {
 
 func seedRemoteLexicon(t *testing.T, reg *registry.Registry, name, typ, body string, priority int) string {
 	t.Helper()
-	lexDir := filepath.Join(t.TempDir(), "fake-lexicon")
+	url := "https://test.example.com/" + name
+	lexDir := reg.LexiconDirForURL(url)
 	subdir := typ + "s"
 
 	if typ == "skill" {
@@ -44,17 +45,17 @@ func seedRemoteLexicon(t *testing.T, reg *registry.Registry, name, typ, body str
 		os.WriteFile(filepath.Join(lexDir, subdir, name+".md"), []byte(body), 0o644)
 	}
 
-	src := registry.Source{
-		URL:       "https://test.example.com/" + name,
-		Priority:  priority,
-		LocalPath: lexDir,
-		Hash:      name,
+	rc := registry.RepoConfig{
+		URL:      url,
+		Priority: priority,
+		Enabled:  true,
 	}
-	sources, _ := reg.Load()
-	sources = append(sources, src)
-	data, _ := json.MarshalIndent(sources, "", "  ")
-	os.MkdirAll(filepath.Dir(reg.SourcesPath()), 0o755)
-	os.WriteFile(reg.SourcesPath(), data, 0o644)
+	if rc.Priority == 0 {
+		rc.Priority = 50
+	}
+	if err := reg.SaveRepoForTest(&rc); err != nil {
+		t.Fatalf("save repo: %v", err)
+	}
 	return lexDir
 }
 
@@ -245,7 +246,7 @@ func findLexiconDir(t *testing.T, reg *registry.Registry, sourceName string) str
 	t.Helper()
 	sources, _ := reg.Load()
 	for _, s := range sources {
-		if s.Hash == sourceName {
+		if strings.Contains(s.URL, sourceName) {
 			return s.LocalPath
 		}
 	}

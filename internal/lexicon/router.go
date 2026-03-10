@@ -78,6 +78,9 @@ func Resolve(_ context.Context, reg *registry.Registry, workspaceRoot string, op
 
 	sources, _ := reg.Load()
 	for _, src := range sources {
+		if !src.Enabled {
+			continue
+		}
 		cfg, _ := registry.LoadLexiconConfig(src.LocalPath)
 
 		effectivePriority := src.Priority

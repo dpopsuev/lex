@@ -19,6 +19,8 @@ type Source struct {
 	URL       string         `json:"url"`
 	Ref       string         `json:"ref,omitempty"`
 	Priority  int            `json:"priority"`
+	Enabled   bool           `json:"enabled"`
+	Labels    []string       `json:"labels,omitempty"`
 	LocalPath string         `json:"local_path"`
 	AddedAt   time.Time      `json:"added_at"`
 	SyncedAt  time.Time      `json:"synced_at"`
@@ -50,15 +52,59 @@ func New(root string) *Registry {
 	return &Registry{root: root}
 }
 
+func (r *Registry) Root() string {
+	return r.root
+}
+
 func (r *Registry) SourcesPath() string {
 	return filepath.Join(r.root, "sources.json")
+}
+
+func (r *Registry) ReposDir() string {
+	return filepath.Join(r.root, "repos.d")
 }
 
 func (r *Registry) lexiconDir(hash string) string {
 	return filepath.Join(r.root, "lexicons", hash)
 }
 
+// LexiconDirForURL returns the local path for a lexicon URL (used by tests).
+func (r *Registry) LexiconDirForURL(url string) string {
+	return r.lexiconDir(urlHash(url))
+}
+
 func (r *Registry) Load() ([]Source, error) {
+	// Prefer repos.d; migrate from sources.json if repos.d is empty
+	repos, err := r.listRepos()
+	if err != nil {
+		return nil, err
+	}
+	if len(repos) > 0 {
+		return r.sourcesFromRepos(repos)
+	}
+	// Backward compat: load from sources.json and migrate to repos.d
+	sources, err := r.loadFromSourcesJSON()
+	if err != nil || len(sources) == 0 {
+		return sources, err
+	}
+	// Migrate each source to repos.d
+	for _, s := range sources {
+		rc := RepoConfig{
+			URL:      s.URL,
+			Ref:      s.Ref,
+			Priority: s.Priority,
+			Enabled:  true,
+			Labels:   s.Labels,
+		}
+		if rc.Priority == 0 {
+			rc.Priority = 50
+		}
+		_ = r.saveRepo(&rc)
+	}
+	return sources, nil
+}
+
+func (r *Registry) loadFromSourcesJSON() ([]Source, error) {
 	data, err := os.ReadFile(r.SourcesPath())
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -69,6 +115,30 @@ func (r *Registry) Load() ([]Source, error) {
 	var sources []Source
 	if err := json.Unmarshal(data, &sources); err != nil {
 		return nil, err
+	}
+	for i := range sources {
+		sources[i].Enabled = true // sources.json had no Enabled; default true for migrated
+		if sources[i].Priority == 0 {
+			sources[i].Priority = 50
+		}
+	}
+	return sources, nil
+}
+
+func (r *Registry) sourcesFromRepos(repos []RepoConfig) ([]Source, error) {
+	var sources []Source
+	for _, rc := range repos {
+		hash := urlHash(rc.URL)
+		localPath := r.lexiconDir(hash)
+		// Check if clone exists; if not, source is registered but not yet cloned
+		addedAt := time.Time{}
+		syncedAt := time.Time{}
+		if fi, err := os.Stat(localPath); err == nil && fi.IsDir() {
+			addedAt = fi.ModTime()
+			syncedAt = fi.ModTime()
+		}
+		src := repoToSource(rc, localPath, hash, addedAt, syncedAt)
+		sources = append(sources, src)
 	}
 	return sources, nil
 }
@@ -111,33 +181,29 @@ func (r *Registry) Add(_ context.Context, gitURL, ref string, priority int) (*So
 		return nil, fmt.Errorf("clone lexicon: %w", err)
 	}
 
+	if priority == 0 {
+		priority = 50
+	}
+	now := time.Now()
 	src := &Source{
 		URL:       gitURL,
 		Ref:       ref,
 		Priority:  priority,
+		Enabled:   true,
 		LocalPath: localPath,
-		AddedAt:   time.Now(),
-		SyncedAt:  time.Now(),
+		AddedAt:   now,
+		SyncedAt:  now,
 		Hash:      hash,
 	}
 
-	err := r.withLock(func() error {
-		sources, _ := r.Load()
-		found := false
-		for i, s := range sources {
-			if s.Hash == hash {
-				sources[i] = *src
-				found = true
-				break
-			}
-		}
-		if !found {
-			sources = append(sources, *src)
-		}
-		return r.save(sources)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("save sources: %w", err)
+	rc := RepoConfig{
+		URL:      gitURL,
+		Ref:      ref,
+		Priority: priority,
+		Enabled:  true,
+	}
+	if err := r.saveRepo(&rc); err != nil {
+		return nil, fmt.Errorf("save repo config: %w", err)
 	}
 	return src, nil
 }
@@ -149,43 +215,69 @@ func (r *Registry) Sync(_ context.Context) (int, error) {
 	}
 
 	synced := 0
-	for i, src := range sources {
+	for _, src := range sources {
+		if !src.Enabled {
+			continue
+		}
 		if err := shallowClone(src.URL, src.Ref, src.LocalPath); err != nil {
 			continue
 		}
-		sources[i].SyncedAt = time.Now()
 		synced++
-	}
-	if err := r.withLock(func() error { return r.save(sources) }); err != nil {
-		return synced, err
 	}
 	return synced, nil
 }
 
-func (r *Registry) Remove(_ context.Context, url string) error {
-	var removed *Source
-	err := r.withLock(func() error {
-		sources, err := r.Load()
-		if err != nil {
-			return err
-		}
-		var kept []Source
-		for _, s := range sources {
-			if s.URL == url {
-				removed = &s
-				continue
-			}
-			kept = append(kept, s)
-		}
-		if removed == nil {
-			return fmt.Errorf("lexicon source not found: %s", url)
-		}
-		return r.save(kept)
-	})
+func (r *Registry) EnableSource(url string) error {
+	return r.setSourceEnabled(url, true)
+}
+
+func (r *Registry) DisableSource(url string) error {
+	return r.setSourceEnabled(url, false)
+}
+
+func (r *Registry) setSourceEnabled(url string, enabled bool) error {
+	rc, err := r.loadRepo(url)
 	if err != nil {
 		return err
 	}
-	if removed != nil && removed.LocalPath != "" {
+	if rc == nil {
+		return fmt.Errorf("lexicon source not found: %s", url)
+	}
+	rc.Enabled = enabled
+	return r.saveRepo(rc)
+}
+
+func (r *Registry) SetSourcePriority(url string, priority int) error {
+	rc, err := r.loadRepo(url)
+	if err != nil {
+		return err
+	}
+	if rc == nil {
+		return fmt.Errorf("lexicon source not found: %s", url)
+	}
+	rc.Priority = priority
+	return r.saveRepo(rc)
+}
+
+func (r *Registry) Remove(_ context.Context, url string) error {
+	sources, err := r.Load()
+	if err != nil {
+		return err
+	}
+	var removed *Source
+	for _, s := range sources {
+		if s.URL == url {
+			removed = &s
+			break
+		}
+	}
+	if removed == nil {
+		return fmt.Errorf("lexicon source not found: %s", url)
+	}
+	if err := r.removeRepoFile(url); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if removed.LocalPath != "" {
 		os.RemoveAll(removed.LocalPath)
 	}
 	return nil
