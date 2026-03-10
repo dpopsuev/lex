@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -61,6 +62,7 @@ var serveCmd = &cobra.Command{
 
 Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		initLogger()
 		roots := serveFlags.workspaces
 		if len(roots) == 0 {
 			cwd, _ := os.Getwd()
@@ -73,9 +75,10 @@ Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config
 				func(r *http.Request) *sdkmcp.Server { return srv },
 				nil,
 			)
-			fmt.Fprintf(os.Stderr, "lex: listening on %s\n", serveFlags.addr)
+			slog.Info("lex server starting", "transport", "http", "addr", serveFlags.addr)
 			return http.ListenAndServe(serveFlags.addr, handler)
 		}
+		slog.Info("lex server starting", "transport", "stdio")
 		return srv.Run(context.Background(), &sdkmcp.StdioTransport{})
 	},
 }
@@ -377,6 +380,22 @@ func printJSON(v any) error {
 	data, _ := json.MarshalIndent(v, "", "  ")
 	fmt.Println(string(data))
 	return nil
+}
+
+func initLogger() {
+	level := slog.LevelInfo
+	if v := os.Getenv("LEX_LOG_LEVEL"); v != "" {
+		switch strings.ToLower(v) {
+		case "debug":
+			level = slog.LevelDebug
+		case "warn":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		}
+	}
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(handler))
 }
 
 func main() {

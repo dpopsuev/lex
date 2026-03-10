@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/dpopsuev/lex/internal/lexicon"
 	"github.com/dpopsuev/lex/internal/protocol"
@@ -14,7 +16,7 @@ import (
 
 func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 	srv := sdkmcp.NewServer(
-		&sdkmcp.Implementation{Name: "lex", Version: "0.2.0"},
+		&sdkmcp.Implementation{Name: "lex", Version: "0.3.0"},
 		&sdkmcp.ServerOptions{
 			Instructions: "Lex is a lexicon resolver for AI agents. " +
 				"It reads .cursor/ rules and skills from local workspaces and merges them with remote lexicon repositories " +
@@ -40,20 +42,36 @@ func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
 	}, noOut(h.handleManageLexicons))
 
 	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "get_config",
-		Description: "Return current global config (default_priority, cache_dir, enabled, labels).",
-	}, noOut(h.handleGetConfig))
-
-	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name:        "set_config",
-		Description: "Set a global config value. Keys: default_priority, cache_dir, enabled, labels (comma-separated).",
-	}, noOut(h.handleSetConfig))
+		Name: "config",
+		Description: "Get or set global configuration. " +
+			"Actions: get (return current config), set (update a key). " +
+			"Keys: default_priority, cache_dir, enabled, labels (comma-separated).",
+	}, noOut(h.handleConfig))
 
 	return srv
 }
 
 type handler struct {
 	svc *protocol.Service
+}
+
+// --- consolidated config tool ---
+
+type configInput struct {
+	Action string `json:"action"`
+	Key    string `json:"key,omitempty"`
+	Value  string `json:"value,omitempty"`
+}
+
+func (h *handler) handleConfig(ctx context.Context, req *sdkmcp.CallToolRequest, in configInput) (*sdkmcp.CallToolResult, any, error) {
+	switch in.Action {
+	case "get":
+		return h.handleGetConfig(ctx, req, emptyInput{})
+	case "set":
+		return h.handleSetConfig(ctx, req, setConfigInput{Key: in.Key, Value: in.Value})
+	default:
+		return nil, nil, fmt.Errorf("unknown config action %q (valid: get, set)", in.Action)
+	}
 }
 
 // --- handlers ---
@@ -360,5 +378,19 @@ func jsonResult(data any) (*sdkmcp.CallToolResult, any, error) {
 }
 
 func noOut[In any](h func(context.Context, *sdkmcp.CallToolRequest, In) (*sdkmcp.CallToolResult, any, error)) sdkmcp.ToolHandlerFor[In, any] {
-	return h
+	return func(ctx context.Context, req *sdkmcp.CallToolRequest, in In) (*sdkmcp.CallToolResult, any, error) {
+		tool := ""
+		if req != nil {
+			tool = req.Params.Name
+		}
+		start := time.Now()
+		result, out, err := h(ctx, req, in)
+		elapsed := time.Since(start)
+		if err != nil {
+			slog.Error("tool call failed", "tool", tool, "elapsed", elapsed, "error", err)
+		} else {
+			slog.Debug("tool call", "tool", tool, "elapsed", elapsed)
+		}
+		return result, out, err
+	}
 }
