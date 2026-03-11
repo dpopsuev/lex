@@ -69,7 +69,7 @@ Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config
 			roots = []string{cwd}
 		}
 		reg := registry.New(registry.DefaultRoot())
-		srv := lexmcp.NewServer(reg, roots)
+		srv := lexmcp.NewServer(reg, roots, Version)
 		if serveFlags.transport == "http" {
 			handler := sdkmcp.NewStreamableHTTPHandler(
 				func(r *http.Request) *sdkmcp.Server { return srv },

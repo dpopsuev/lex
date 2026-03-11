@@ -14,9 +14,9 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func NewServer(reg *registry.Registry, workspaceRoots []string) *sdkmcp.Server {
+func NewServer(reg *registry.Registry, workspaceRoots []string, version string) *sdkmcp.Server {
 	srv := sdkmcp.NewServer(
-		&sdkmcp.Implementation{Name: "lex", Version: "0.4.0"},
+		&sdkmcp.Implementation{Name: "lex", Version: version},
 		&sdkmcp.ServerOptions{
 			Instructions: "Lex is a lexicon resolver for AI agents. " +
 				"It reads .cursor/ rules and skills from local workspaces and merges them with remote lexicon repositories " +

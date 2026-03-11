@@ -3,7 +3,8 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /lex ./cmd/lex
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.Version=${VERSION}" -o /lex ./cmd/lex
 
 FROM alpine:latest
 RUN apk add --no-cache git ca-certificates
