@@ -56,19 +56,19 @@ lex serve --transport http            # HTTP on :8082
 
 > **You:** Which developer best practices do we have loaded, and from which lexicon?
 >
-> **Agent:** *(calls `resolve_lexicon`)* You have 12 rules active. 4 come from your local `.cursor/rules/` (priority 100) — project standards, testing methodology, deterministic-first, and security analysis. The other 8 come from your remote lexicon at `github.com/dpopsuev/lexicon` (priority 50) — Go conventions, reviewability-first, commit standards, and more. Local rules win on any overlap.
+> **Agent:** *(calls `lexicon` with action `resolve`)* You have 12 rules active. 4 come from your local `.cursor/rules/` (priority 100) — project standards, testing methodology, deterministic-first, and security analysis. The other 8 come from your remote lexicon at `github.com/dpopsuev/lexicon` (priority 50) — Go conventions, reviewability-first, commit standards, and more. Local rules win on any overlap.
 
 > **You:** Add my team's shared lexicon so every project picks it up.
 >
-> **Agent:** *(calls `manage_lexicons` with action `add`, url `https://github.com/myorg/lexicon`, priority 60)* Done. It's registered at priority 60, so it overrides the default lexicon (25) but your local `.cursor/` rules (100) still take precedence. Run `resolve_lexicon` on any workspace to see the merged result.
+> **Agent:** *(calls `lexicon` with action `add`, url `https://github.com/myorg/lexicon`, priority 60)* Done. It's registered at priority 60, so it overrides the default lexicon (25) but your local `.cursor/` rules (100) still take precedence. Run `lexicon` with action `resolve` on any workspace to see the merged result.
 
 > **You:** I'm editing `internal/auth/handler.go` — are there security-specific rules I should know about?
 >
-> **Agent:** *(calls `resolve_lexicon` with active_file and labels `["security"]`)* Yes, 2 rules matched: `security-analysis.mdc` from your local workspace (OWASP Top 10 checklist for every trust-boundary change) and `secure-defaults.mdc` from your remote lexicon (input validation, no hardcoded secrets). Both apply to `*.go` files.
+> **Agent:** *(calls `lexicon` with action `resolve`, active_file and labels `["security"]`)* Yes, 2 rules matched: `security-analysis.mdc` from your local workspace (OWASP Top 10 checklist for every trust-boundary change) and `secure-defaults.mdc` from your remote lexicon (input validation, no hardcoded secrets). Both apply to `*.go` files.
 
 > **You:** That remote lexicon is stale. Sync it.
 >
-> **Agent:** *(calls `manage_lexicons` with action `sync`)* All sources re-fetched. The remote lexicon pulled 3 new rules since last sync.
+> **Agent:** *(calls `lexicon` with action `sync`)* All sources re-fetched. The remote lexicon pulled 3 new rules since last sync.
 
 ## The Problem
 
@@ -122,9 +122,7 @@ routing:
 
 | Tool | Description |
 |------|-------------|
-| `resolve_lexicon` | Resolve effective rules and skills. Supports path, labels, source, type, active_file, context filters. |
-| `inspect_lexicon` | List all artifacts from registered lexicon sources. |
-| `manage_lexicons` | Manage sources: add, remove, enable, disable, sync, list. |
+| `lexicon` | Resolve effective rules and skills by merging local .cursor/ with remote lexicons. Actions: `resolve` (merge local+remote with path/label filters), `inspect` (list rules/skills/templates from registered sources), `add` (register remote repo), `remove` (delete source), `enable/disable` (toggle without removing), `sync` (re-fetch all), `list` (show sources). |
 | `config` | Get or set global configuration. Actions: `get`, `set`. Keys: default_priority, cache_dir, enabled, labels. |
 
 ## Configuration
