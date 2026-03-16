@@ -7,9 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dpopsuev/lex/internal/cursor"
+	"github.com/dpopsuev/lex/internal/adapter"
 	"github.com/dpopsuev/lex/internal/frontmatter"
 	"github.com/dpopsuev/lex/internal/registry"
+	"github.com/dpopsuev/lex/internal/rule"
 )
 
 type ResolvedRule struct {
@@ -48,34 +49,44 @@ type ResolveOpts struct {
 	// Context is a set of hot keywords from the workspace (open files, domain
 	// terms, project names). Matched against artifact labels.
 	Context []string
+
+	// Signals provides context for the scoring engine (v0.5.0+).
+	// When set, rules are scored and ranked by relevance.
+	Signals rule.ContextSignals
+
+	// Budget is the maximum token count for returned rules (0 = unlimited).
+	Budget int
 }
 
 func Resolve(_ context.Context, reg *registry.Registry, workspaceRoot string, opts ResolveOpts) (*Resolution, error) {
 	res := &Resolution{}
 
-	localRules, _ := cursor.ReadRules(workspaceRoot)
+	// Load local rules via adapter registry (detects .cursor/, CLAUDE.md, AGENTS.md, etc.)
+	localRules, _ := adapter.DetectAndLoad(workspaceRoot)
 	for _, r := range localRules {
-		name := strings.TrimSuffix(filepath.Base(r.Path), filepath.Ext(r.Path))
-		res.Rules = append(res.Rules, ResolvedRule{
-			Name:        name,
-			Source:      "local",
-			Priority:    50,
-			Body:        r.Body,
-			Globs:       r.Globs,
-			AlwaysApply: r.AlwaysApply,
-		})
+		switch r.Kind {
+		case "skill":
+			res.Skills = append(res.Skills, ResolvedSkill{
+				Name:     r.Name,
+				Source:   r.Source,
+				Priority: r.Priority,
+				Body:     r.Content,
+				Labels:   r.Labels,
+			})
+		default:
+			res.Rules = append(res.Rules, ResolvedRule{
+				Name:        r.Name,
+				Source:      r.Source,
+				Priority:    r.Priority,
+				Body:        r.Content,
+				Labels:      r.Labels,
+				Globs:       r.Globs,
+				AlwaysApply: hasTrigger(r.Triggers, rule.TriggerAlways),
+			})
+		}
 	}
 
-	localSkills, _ := cursor.ReadSkills(workspaceRoot)
-	for _, sk := range localSkills {
-		res.Skills = append(res.Skills, ResolvedSkill{
-			Name:     sk.Name,
-			Source:   "local",
-			Priority: 50,
-			Body:     sk.Body,
-		})
-	}
-
+	// Load remote sources from registry.
 	sources, _ := reg.Load()
 	for _, src := range sources {
 		if !src.Enabled {
@@ -123,6 +134,7 @@ func Resolve(_ context.Context, reg *registry.Registry, workspaceRoot string, op
 		}
 	}
 
+	// Legacy smart routing (ActiveFile/Context filtering).
 	smartRouting := opts.ActiveFile != "" || len(opts.Context) > 0
 	if smartRouting {
 		res.Rules = filterRulesByContext(res.Rules, opts.ActiveFile, opts.Context)
@@ -132,7 +144,67 @@ func Resolve(_ context.Context, reg *registry.Registry, workspaceRoot string, op
 	res.Rules = deduplicateRules(res.Rules)
 	res.Skills = deduplicateSkills(res.Skills)
 
+	// Apply new context-aware scoring + token budget if signals provided.
+	hasSignals := opts.Signals.Language != "" ||
+		len(opts.Signals.Files) > 0 ||
+		len(opts.Signals.Keywords) > 0 ||
+		opts.Budget > 0
+	if hasSignals {
+		res.Rules = scoreAndBudgetRules(res.Rules, opts.Signals, opts.Budget)
+	}
+
 	return res, nil
+}
+
+func hasTrigger(triggers []rule.Trigger, t rule.TriggerType) bool {
+	for _, tr := range triggers {
+		if tr.Type == t {
+			return true
+		}
+	}
+	return false
+}
+
+// scoreAndBudgetRules converts resolved rules to rule.Rule, runs the scoring
+// engine, and converts back.
+func scoreAndBudgetRules(rules []ResolvedRule, signals rule.ContextSignals, budget int) []ResolvedRule {
+	rr := make([]rule.Rule, len(rules))
+	for i, r := range rules {
+		rr[i] = rule.Rule{
+			Name:     r.Name,
+			Kind:     "rule",
+			Source:   r.Source,
+			Content:  r.Body,
+			Priority: r.Priority,
+			Labels:   r.Labels,
+			Globs:    r.Globs,
+		}
+		if r.AlwaysApply {
+			rr[i].Triggers = append(rr[i].Triggers, rule.Trigger{Type: rule.TriggerAlways})
+		}
+		for _, g := range r.Globs {
+			rr[i].Triggers = append(rr[i].Triggers, rule.Trigger{Type: rule.TriggerFileGlob, Pattern: g})
+		}
+		for _, l := range r.Labels {
+			rr[i].Triggers = append(rr[i].Triggers, rule.Trigger{Type: rule.TriggerKeyword, Pattern: l})
+		}
+	}
+
+	scored := rule.Resolve(rr, rule.ResolveOpts{Signals: signals, Budget: budget})
+
+	out := make([]ResolvedRule, len(scored))
+	for i, r := range scored {
+		out[i] = ResolvedRule{
+			Name:     r.Name,
+			Source:   r.Source,
+			Priority: r.Priority,
+			Body:     r.Content,
+			Labels:   r.Labels,
+			Globs:    r.Globs,
+		}
+		out[i].AlwaysApply = hasTrigger(r.Triggers, rule.TriggerAlways)
+	}
+	return out
 }
 
 // filterRulesByContext keeps rules that are contextually relevant:

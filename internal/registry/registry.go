@@ -285,10 +285,19 @@ func (r *Registry) Remove(_ context.Context, url string) error {
 
 // DiscoverArtifacts walks a cloned lexicon directory and returns rules,
 // templates, and skills found inside, with frontmatter metadata.
+// Supports both legacy layout (rules/, skills/, templates/) and the
+// v0.5.0 generic/ layout (generic/rules/, generic/skills/).
 func DiscoverArtifacts(root, sourceURL string, priority int) []Artifact {
 	var artifacts []Artifact
+
+	// Check for v0.5.0 generic/ layout first; fall back to legacy root.
+	base := root
+	if fi, err := os.Stat(filepath.Join(root, "generic")); err == nil && fi.IsDir() {
+		base = filepath.Join(root, "generic")
+	}
+
 	for _, dir := range []string{"rules", "templates", "skills"} {
-		dirPath := filepath.Join(root, dir)
+		dirPath := filepath.Join(base, dir)
 		entries, err := os.ReadDir(dirPath)
 		if err != nil {
 			continue

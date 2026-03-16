@@ -11,6 +11,7 @@ import (
 	"github.com/dpopsuev/lex/internal/lexicon"
 	"github.com/dpopsuev/lex/internal/protocol"
 	"github.com/dpopsuev/lex/internal/registry"
+	"github.com/dpopsuev/lex/internal/rule"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -18,9 +19,11 @@ func NewServer(reg *registry.Registry, workspaceRoots []string, version string) 
 	srv := sdkmcp.NewServer(
 		&sdkmcp.Implementation{Name: "lex", Version: version},
 		&sdkmcp.ServerOptions{
-			Instructions: "Lex is a lexicon resolver for AI agents. " +
-				"It reads .cursor/ rules and skills from local workspaces and merges them with remote lexicon repositories " +
-				"using priority-based cascading. Use the lexicon tool to resolve, inspect, and manage sources. " +
+			Instructions: "Lex is a provider-agnostic prompt enrichment engine for AI agents. " +
+				"It reads rules from multiple sources (.cursor/rules, CLAUDE.md, AGENTS.md, .github/copilot, remote repos) " +
+				"and merges them using priority-based cascading with context-aware scoring. " +
+				"Use the lexicon tool to resolve, inspect, and manage sources. " +
+				"Pass language, files, and keywords params for context-aware resolution. " +
 				"Use the config tool for global settings.",
 		},
 	)
@@ -63,6 +66,10 @@ type lexiconInput struct {
 	URL        string   `json:"url,omitempty" jsonschema:"lexicon repository URL (add/remove/enable/disable/inspect)"`
 	Ref        string   `json:"ref,omitempty" jsonschema:"git ref to pin (add)"`
 	Priority   int      `json:"priority,omitempty" jsonschema:"source priority, higher wins on conflict (add)"`
+	Language   string   `json:"language,omitempty" jsonschema:"programming language for context-aware scoring (resolve)"`
+	Files      []string `json:"files,omitempty" jsonschema:"touched file paths for context-aware scoring (resolve)"`
+	Keywords   []string `json:"keywords,omitempty" jsonschema:"domain keywords for context-aware scoring (resolve)"`
+	Budget     int      `json:"budget,omitempty" jsonschema:"max tokens for returned rules, 0=unlimited (resolve)"`
 }
 
 func (h *handler) handleLexicon(ctx context.Context, req *sdkmcp.CallToolRequest, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
@@ -127,6 +134,13 @@ func (h *handler) doResolve(ctx context.Context, in lexiconInput) (*sdkmcp.CallT
 		Labels:     in.Labels,
 		ActiveFile: in.ActiveFile,
 		Context:    in.Context,
+		Signals: rule.ContextSignals{
+			CWD:      in.Path,
+			Language: in.Language,
+			Files:    in.Files,
+			Keywords: in.Keywords,
+		},
+		Budget: in.Budget,
 	}
 	res, err := h.svc.Resolve(ctx, in.Path, opts)
 	if err != nil {

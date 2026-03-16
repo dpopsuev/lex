@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	_ "github.com/dpopsuev/lex/internal/adapter/cursor"
 	"github.com/dpopsuev/lex/internal/registry"
 )
 

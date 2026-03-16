@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/dpopsuev/lex/internal/adapter"
 	"github.com/dpopsuev/lex/internal/config"
 	"github.com/dpopsuev/lex/internal/cursor"
 	"github.com/dpopsuev/lex/internal/lexicon"
 	"github.com/dpopsuev/lex/internal/registry"
+	"github.com/dpopsuev/lex/internal/rule"
 )
 
 // Service encapsulates all Lex business logic.
@@ -110,6 +113,124 @@ func (s *Service) InstallBridgeRule(_ context.Context, path string, global bool)
 		return cursor.WriteBridgeRule(cursor.GlobalCursorRulesDir(), true)
 	}
 	return cursor.WriteBridgeRule(s.resolvePath(path), false)
+}
+
+// EnrichOpts controls enrichment output.
+type EnrichOpts struct {
+	Format   string // "text", "gemini", "agents-md"
+	Language string
+	Files    []string
+	Keywords []string
+	Budget   int
+}
+
+// Enrich resolves rules for the given workspace and formats them for hook output.
+func (s *Service) Enrich(ctx context.Context, cwd string, opts EnrichOpts) (string, error) {
+	root := s.resolvePath(cwd)
+
+	// Collect rules from all local adapters.
+	localRules, _ := adapter.DetectAndLoad(root)
+
+	// Collect rules from remote sources.
+	sources, _ := s.reg.Load()
+	for _, src := range sources {
+		if !src.Enabled {
+			continue
+		}
+		cfg, _ := registry.LoadLexiconConfig(src.LocalPath)
+		effectivePriority := src.Priority
+		if cfg != nil && cfg.Defaults.Priority > 0 {
+			effectivePriority = cfg.Defaults.Priority
+		}
+		artifacts := registry.DiscoverArtifacts(src.LocalPath, src.URL, effectivePriority)
+		for _, a := range artifacts {
+			body := readArtifactBody(a.Path)
+			rr := rule.Rule{
+				Name:     a.Name,
+				Kind:     a.Type,
+				Source:   a.Source,
+				Adapter:  "remote",
+				Content:  body,
+				Scope:    "global",
+				Priority: a.Priority,
+				Labels:   a.Labels,
+			}
+			for _, l := range a.Labels {
+				rr.Triggers = append(rr.Triggers, rule.Trigger{Type: rule.TriggerKeyword, Pattern: l})
+			}
+			localRules = append(localRules, rr)
+		}
+	}
+
+	// Resolve with scoring and budget.
+	budget := opts.Budget
+	if budget == 0 {
+		budget = 2000
+	}
+	resolved := rule.Resolve(localRules, rule.ResolveOpts{
+		Signals: rule.ContextSignals{
+			CWD:      root,
+			Language: opts.Language,
+			Files:    opts.Files,
+			Keywords: opts.Keywords,
+		},
+		Budget: budget,
+	})
+
+	return formatEnrichment(resolved, opts.Format), nil
+}
+
+func readArtifactBody(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	// Strip frontmatter if present.
+	s := string(data)
+	if strings.HasPrefix(s, "---") {
+		if idx := strings.Index(s[3:], "---"); idx >= 0 {
+			s = s[idx+6:]
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
+func formatEnrichment(rules []rule.Rule, format string) string {
+	if len(rules) == 0 {
+		return ""
+	}
+
+	switch format {
+	case "agents-md":
+		var sb strings.Builder
+		sb.WriteString("# Project Rules\n\n")
+		for _, r := range rules {
+			sb.WriteString("## ")
+			sb.WriteString(r.Name)
+			sb.WriteString("\n\n")
+			sb.WriteString(r.Content)
+			sb.WriteString("\n\n")
+		}
+		return strings.TrimSpace(sb.String())
+
+	case "gemini":
+		var sb strings.Builder
+		for _, r := range rules {
+			sb.WriteString(r.Content)
+			sb.WriteString("\n\n")
+		}
+		return fmt.Sprintf(`{"content": %q}`, strings.TrimSpace(sb.String()))
+
+	default: // "text"
+		var parts []string
+		for _, r := range rules {
+			parts = append(parts, r.Content)
+		}
+		return strings.Join(parts, "\n\n---\n\n")
+	}
 }
 
 func (s *Service) resolvePath(path string) string {

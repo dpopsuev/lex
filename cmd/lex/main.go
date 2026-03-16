@@ -14,6 +14,12 @@ import (
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	// Adapter registration (side-effect imports).
+	_ "github.com/dpopsuev/lex/internal/adapter/claude"
+	_ "github.com/dpopsuev/lex/internal/adapter/codex"
+	_ "github.com/dpopsuev/lex/internal/adapter/copilot"
+	_ "github.com/dpopsuev/lex/internal/adapter/cursor"
+
 	"github.com/dpopsuev/lex/internal/lexicon"
 	lexmcp "github.com/dpopsuev/lex/internal/mcp"
 	"github.com/dpopsuev/lex/internal/protocol"
@@ -310,6 +316,71 @@ routing: []
 	return nil
 }
 
+var enrichFlags struct {
+	format   string
+	budget   int
+	language string
+	files    []string
+}
+
+var enrichCmd = &cobra.Command{
+	Use:   "enrich",
+	Short: "Output enrichment text for hook integration",
+	Long: `Resolve rules for the current workspace and output enrichment text.
+
+Designed for hook integration with Claude Code, Gemini CLI, and Codex.
+Auto-detects language from go.mod, package.json, or pyproject.toml.
+
+Output formats:
+  text      - plain text with rules separated by --- (default, for Claude Code)
+  gemini    - JSON content wrapper (for Gemini CLI)
+  agents-md - AGENTS.md markdown format (for Codex)`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := newService()
+		cwd, _ := os.Getwd()
+
+		lang := enrichFlags.language
+		if lang == "" {
+			lang = detectLanguage(cwd)
+		}
+
+		output, err := svc.Enrich(cmd.Context(), cwd, protocol.EnrichOpts{
+			Format:   enrichFlags.format,
+			Language: lang,
+			Files:    enrichFlags.files,
+			Budget:   enrichFlags.budget,
+		})
+		if err != nil {
+			return err
+		}
+		if output != "" {
+			fmt.Print(output)
+		}
+		return nil
+	},
+}
+
+func detectLanguage(root string) string {
+	checks := []struct {
+		file string
+		lang string
+	}{
+		{"go.mod", "go"},
+		{"package.json", "javascript"},
+		{"pyproject.toml", "python"},
+		{"Cargo.toml", "rust"},
+		{"pom.xml", "java"},
+		{"build.gradle", "java"},
+		{"Gemfile", "ruby"},
+	}
+	for _, c := range checks {
+		if _, err := os.Stat(filepath.Join(root, c.file)); err == nil {
+			return c.lang
+		}
+	}
+	return ""
+}
+
 var bridgeFlags struct {
 	global bool
 }
@@ -342,9 +413,13 @@ var bridgeCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(versionCmd, serveCmd, addCmd, syncCmd, listCmd, removeCmd, resolveCmd, initCmd, bridgeCmd, configCmd, enableCmd, disableCmd)
+	rootCmd.AddCommand(versionCmd, serveCmd, addCmd, syncCmd, listCmd, removeCmd, resolveCmd, enrichCmd, initCmd, bridgeCmd, configCmd, enableCmd, disableCmd)
 	configCmd.AddCommand(configSetCmd)
 	bridgeCmd.Flags().BoolVar(&bridgeFlags.global, "global", false, "Install to ~/.cursor/rules/ (all workspaces)")
+	enrichCmd.Flags().StringVar(&enrichFlags.format, "format", "text", "Output format: text, gemini, agents-md")
+	enrichCmd.Flags().IntVar(&enrichFlags.budget, "budget", 2000, "Max tokens for returned rules (0=unlimited)")
+	enrichCmd.Flags().StringVar(&enrichFlags.language, "language", "", "Programming language (auto-detected if omitted)")
+	enrichCmd.Flags().StringSliceVar(&enrichFlags.files, "files", nil, "Touched file paths for context-aware scoring")
 
 	serveCmd.Flags().StringArrayVar(&serveFlags.workspaces, "workspace", nil, "Workspace root paths (repeatable; defaults to cwd)")
 	serveCmd.Flags().StringVar(&serveFlags.transport, "transport", envOr("LEX_TRANSPORT", "stdio"), "Transport type: stdio, http ($LEX_TRANSPORT)")
