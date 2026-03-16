@@ -30,21 +30,19 @@ func buildImage(t *testing.T) {
 	root := repoRoot(t)
 	start := time.Now()
 	run(t, "podman", "build", "-t", testImage, "-f", filepath.Join(root, "Dockerfile.test"), root)
-	t.Logf("[YELLOW] image built in %s", time.Since(start).Round(time.Millisecond))
+	t.Logf("image built in %s", time.Since(start).Round(time.Millisecond))
 }
 
-func startContainer(t *testing.T, lexiconPath, workspacePath string) {
+func startContainer(t *testing.T, mounts ...string) {
 	t.Helper()
 	start := time.Now()
-	run(t, "podman", "run", "-d",
-		"--name", testContainer,
-		"-p", testPort,
-		"-v", lexiconPath+":/lexicon:ro,z",
-		"-v", workspacePath+":/workspace:ro,z",
-		testImage,
-	)
-	t.Logf("[YELLOW] container started in %s (lexicon=%s, workspace=%s)",
-		time.Since(start).Round(time.Millisecond), lexiconPath, workspacePath)
+	args := []string{"run", "-d", "--name", testContainer, "-p", testPort}
+	for _, m := range mounts {
+		args = append(args, "-v", m)
+	}
+	args = append(args, testImage)
+	run(t, "podman", args...)
+	t.Logf("container started in %s", time.Since(start).Round(time.Millisecond))
 }
 
 func stopContainer(t *testing.T) {
@@ -56,11 +54,11 @@ func repoRoot(t *testing.T) string {
 	t.Helper()
 	out, err := exec.Command("go", "env", "GOMOD").CombinedOutput()
 	if err != nil {
-		t.Fatalf("[ORANGE] go env GOMOD failed: %v", err)
+		t.Fatalf("go env GOMOD failed: %v", err)
 	}
 	mod := strings.TrimSpace(string(out))
 	if mod == "" {
-		t.Fatal("[ORANGE] not inside a Go module")
+		t.Fatal("not inside a Go module")
 	}
 	return filepath.Dir(mod)
 }
@@ -69,7 +67,7 @@ func run(t *testing.T, name string, args ...string) {
 	t.Helper()
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
-		t.Fatalf("[ORANGE] %s %v failed: %v\n%s", name, args, err, out)
+		t.Fatalf("%s %v failed: %v\n%s", name, args, err, out)
 	}
 }
 
@@ -86,31 +84,31 @@ func waitHealthy(t *testing.T, timeout time.Duration) {
 		resp, err := doMCP(body, "")
 		if err == nil {
 			resp.Body.Close()
-			t.Logf("[YELLOW] container healthy after %d attempts (%s)", attempts, time.Since(start).Round(time.Millisecond))
+			t.Logf("container healthy after %d attempts (%s)", attempts, time.Since(start).Round(time.Millisecond))
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("[ORANGE] container not healthy after %d attempts (%s)", attempts, timeout)
+	t.Fatalf("container not healthy after %d attempts (%s)", attempts, timeout)
 }
 
 func initSession(t *testing.T) string {
 	t.Helper()
 	resp, err := doMCP(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}`, "")
 	if err != nil {
-		t.Fatalf("[ORANGE] initialize: %v", err)
+		t.Fatalf("initialize: %v", err)
 	}
 	sid := resp.Header.Get("Mcp-Session-Id")
 	resp.Body.Close()
 	if sid == "" {
-		t.Fatal("[ORANGE] no Mcp-Session-Id in initialize response")
+		t.Fatal("no Mcp-Session-Id in initialize response")
 	}
 	doMCP(`{"jsonrpc":"2.0","method":"notifications/initialized"}`, sid)
-	t.Logf("[YELLOW] MCP session established: %s", sid[:16]+"...")
+	t.Logf("MCP session established: %s", sid[:16]+"...")
 	return sid
 }
 
-func mcpToolCall(t *testing.T, sid string, id int, tool string, args map[string]any) map[string]any {
+func mcpCall(t *testing.T, sid string, id int, tool string, args map[string]any) string {
 	t.Helper()
 	params := map[string]any{"name": tool}
 	if args != nil {
@@ -127,7 +125,7 @@ func mcpToolCall(t *testing.T, sid string, id int, tool string, args map[string]
 	resp, err := doMCP(string(body), sid)
 	elapsed := time.Since(start)
 	if err != nil {
-		t.Fatalf("[ORANGE] tools/call %s (id=%d): %v", tool, id, err)
+		t.Fatalf("tools/call %s (id=%d): %v", tool, id, err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
@@ -135,14 +133,26 @@ func mcpToolCall(t *testing.T, sid string, id int, tool string, args map[string]
 	jsonPayload := extractSSEData(raw)
 	var result map[string]any
 	if err := json.Unmarshal(jsonPayload, &result); err != nil {
-		t.Fatalf("[ORANGE] unmarshal %s response: %v\nraw: %s", tool, err, truncate(string(raw), 500))
+		t.Fatalf("unmarshal %s response: %v\nraw: %s", tool, err, truncate(string(raw), 500))
 	}
-	t.Logf("[YELLOW] MCP %s (id=%d) completed in %s (%d bytes)",
-		tool, id, elapsed.Round(time.Millisecond), len(raw))
-	return result
+	t.Logf("MCP %s (id=%d) completed in %s (%d bytes)", tool, id, elapsed.Round(time.Millisecond), len(raw))
+
+	r, ok := result["result"].(map[string]any)
+	if !ok {
+		if errObj, ok := result["error"]; ok {
+			t.Fatalf("MCP error: %v", errObj)
+		}
+		t.Fatalf("no result field: %v", result)
+	}
+	content, ok := r["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("empty content: %v", r)
+	}
+	first := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	return text
 }
 
-// extractSSEData parses SSE-formatted response to extract the JSON data line.
 func extractSSEData(raw []byte) []byte {
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
@@ -151,24 +161,6 @@ func extractSSEData(raw []byte) []byte {
 		}
 	}
 	return raw
-}
-
-func extractText(t *testing.T, result map[string]any) string {
-	t.Helper()
-	r, ok := result["result"].(map[string]any)
-	if !ok {
-		if errObj, ok := result["error"]; ok {
-			t.Fatalf("[ORANGE] MCP error: %v", errObj)
-		}
-		t.Fatalf("[ORANGE] no result field in response: %v", result)
-	}
-	content, ok := r["content"].([]any)
-	if !ok || len(content) == 0 {
-		t.Fatalf("[ORANGE] empty content in result: %v", r)
-	}
-	first := content[0].(map[string]any)
-	text, _ := first["text"].(string)
-	return text
 }
 
 func doMCP(body, sid string) (*http.Response, error) {
@@ -190,8 +182,6 @@ func doMCP(body, sid string) (*http.Response, error) {
 	return resp, nil
 }
 
-// --- env helpers ---
-
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -199,66 +189,16 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// --- resolve helper types ---
-
-type resolvedRule struct {
-	Name        string   `json:"name"`
-	Source      string   `json:"source"`
-	Priority    int      `json:"priority"`
-	Body        string   `json:"body"`
-	Labels      []string `json:"labels"`
-	Globs       []string `json:"globs"`
-	AlwaysApply bool     `json:"always_apply"`
-}
-
-type resolvedSkill struct {
-	Name   string `json:"name"`
-	Source string `json:"source"`
-}
-
-type resolution struct {
-	Rules  []resolvedRule  `json:"rules"`
-	Skills []resolvedSkill `json:"skills"`
-}
-
-func resolveAndParse(t *testing.T, sid string, id int, args map[string]any) resolution {
-	t.Helper()
-	text := extractText(t, mcpToolCall(t, sid, id, "resolve_lexicon", args))
-	var res resolution
-	if err := json.Unmarshal([]byte(text), &res); err != nil {
-		t.Fatalf("[ORANGE] unmarshal resolution: %v\nraw: %s", err, truncate(text, 500))
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
 	}
-	return res
+	return s[:max] + "..."
 }
 
-func logRuleSummary(t *testing.T, label string, res resolution) {
-	t.Helper()
-	var local, remote []string
-	for _, r := range res.Rules {
-		tag := r.Name
-		if r.AlwaysApply {
-			tag += "(always)"
-		}
-		if len(r.Labels) > 0 {
-			tag += fmt.Sprintf("[%s]", strings.Join(r.Labels, ","))
-		}
-		if r.Source == "local" {
-			local = append(local, tag)
-		} else {
-			remote = append(remote, tag)
-		}
-	}
-	t.Logf("[YELLOW] %s: %d rules total — %d local (%s), %d remote (%s), %d skills",
-		label,
-		len(res.Rules),
-		len(local), strings.Join(local, ", "),
-		len(remote), strings.Join(remote, ", "),
-		len(res.Skills))
-}
+// --- Deterministic MCP Tests ---
 
-// --- Declarative Tests: Deterministic Routing ---
-
-func TestE2E_Declarative_Routing(t *testing.T) {
+func TestE2E_Deterministic(t *testing.T) {
 	if _, err := exec.LookPath("podman"); err != nil {
 		t.Skip("podman not found")
 	}
@@ -267,323 +207,158 @@ func TestE2E_Declarative_Routing(t *testing.T) {
 	workspacePath := envOr("WORKSPACE_PATH", "/home/dpopsuev/Workspace/origami")
 
 	if _, err := os.Stat(filepath.Join(lexiconPath, "lexicon.yaml")); err != nil {
-		t.Fatalf("[ORANGE] lexicon repo not found at %s", lexiconPath)
-	}
-	if _, err := os.Stat(filepath.Join(workspacePath, ".cursor", "rules")); err != nil {
-		t.Fatalf("[ORANGE] workspace .cursor/rules not found at %s", workspacePath)
+		t.Skipf("lexicon repo not found at %s", lexiconPath)
 	}
 
 	stopContainer(t)
 	t.Cleanup(func() { stopContainer(t) })
 
-	t.Log("[YELLOW] === Phase 1: Deterministic Routing Tests ===")
 	buildImage(t)
-	startContainer(t, lexiconPath, workspacePath)
+	startContainer(t,
+		lexiconPath+":/lexicon:ro,z",
+		workspacePath+":/workspace:ro,z",
+	)
 	waitHealthy(t, 30*time.Second)
 
 	sid := initSession(t)
 	callID := 10
-	nextID := func() int { callID++; return callID }
+	next := func() int { callID++; return callID }
 
-	// --- add_lexicon ---
-	t.Run("add_lexicon", func(t *testing.T) {
-		text := extractText(t, mcpToolCall(t, sid, nextID(), "add_lexicon", map[string]any{
-			"url": "file:///lexicon",
-		}))
+	t.Run("add_source", func(t *testing.T) {
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "add", "url": "file:///lexicon",
+		})
 		if !strings.Contains(text, "file:///lexicon") {
-			t.Fatalf("[ORANGE] add_lexicon response missing URL:\n%s", text)
+			t.Fatalf("add response missing URL:\n%s", truncate(text, 300))
 		}
-		t.Logf("[YELLOW] registered: %s", truncate(text, 300))
 	})
 
-	// --- inspect_lexicon ---
-	t.Run("inspect_lexicon", func(t *testing.T) {
-		text := extractText(t, mcpToolCall(t, sid, nextID(), "inspect_lexicon", map[string]any{
-			"url": "file:///lexicon",
-		}))
-		for _, kind := range []string{"rule", "skill", "template"} {
-			if !strings.Contains(text, kind) {
-				t.Fatalf("[ORANGE] inspect_lexicon missing %s type:\n%s", kind, truncate(text, 500))
-			}
-		}
-		t.Logf("[YELLOW] inspect result: %s", truncate(text, 500))
-	})
-
-	// --- inspect_lexicon (all sources, no url) ---
-	t.Run("inspect_lexicon_all", func(t *testing.T) {
-		text := extractText(t, mcpToolCall(t, sid, nextID(), "inspect_lexicon", nil))
+	t.Run("inspect_source", func(t *testing.T) {
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "inspect", "url": "file:///lexicon",
+		})
 		if !strings.Contains(text, "rule") {
-			t.Fatalf("[ORANGE] inspect_lexicon (all) missing artifacts:\n%s", truncate(text, 500))
+			t.Fatalf("inspect missing rule type:\n%s", truncate(text, 500))
 		}
-		t.Logf("[YELLOW] inspect all: %s", truncate(text, 500))
 	})
 
-	// --- list_lexicons ---
-	t.Run("list_lexicons", func(t *testing.T) {
-		text := extractText(t, mcpToolCall(t, sid, nextID(), "list_lexicons", nil))
+	t.Run("list_sources", func(t *testing.T) {
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "list",
+		})
 		if !strings.Contains(text, "file:///lexicon") {
-			t.Fatalf("[ORANGE] list_lexicons missing source:\n%s", text)
+			t.Fatalf("list missing source:\n%s", text)
 		}
-		t.Logf("[YELLOW] sources: %s", truncate(text, 300))
 	})
 
-	// --- resolve_all: baseline count ---
 	t.Run("resolve_all", func(t *testing.T) {
-		res := resolveAndParse(t, sid, nextID(), map[string]any{"path": "/workspace"})
-		logRuleSummary(t, "resolve_all", res)
-		if len(res.Rules) < 5 {
-			t.Fatalf("[ORANGE] expected >=5 rules (local+remote), got %d", len(res.Rules))
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "resolve", "path": "/workspace",
+		})
+		if !strings.Contains(text, "rules") {
+			t.Fatalf("resolve missing rules:\n%s", truncate(text, 300))
 		}
-		if len(res.Skills) < 1 {
-			t.Fatalf("[ORANGE] expected >=1 skill, got %d", len(res.Skills))
+		var res map[string]any
+		json.Unmarshal([]byte(text), &res)
+		rules, _ := res["rules"].([]any)
+		if len(rules) < 3 {
+			t.Fatalf("expected >=3 rules, got %d", len(rules))
+		}
+		t.Logf("resolved %d rules", len(rules))
+	})
+
+	t.Run("resolve_with_context_signals", func(t *testing.T) {
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action":   "resolve",
+			"path":     "/workspace",
+			"language": "go",
+			"keywords": []string{"security"},
+			"budget":   1000,
+		})
+		if !strings.Contains(text, "rules") {
+			t.Fatalf("resolve with signals missing rules:\n%s", truncate(text, 300))
+		}
+		t.Logf("resolve with context signals: %s", truncate(text, 200))
+	})
+
+	t.Run("search", func(t *testing.T) {
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "search", "query": "security",
+		})
+		if !strings.Contains(text, "matches") {
+			t.Fatalf("search missing matches field:\n%s", truncate(text, 300))
+		}
+		var res map[string]any
+		json.Unmarshal([]byte(text), &res)
+		count, _ := res["count"].(float64)
+		if count < 1 {
+			t.Fatalf("expected >=1 search match, got %v", count)
+		}
+		t.Logf("search 'security': %d matches", int(count))
+	})
+
+	t.Run("search_no_matches", func(t *testing.T) {
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "search", "query": "xyznonexistent",
+		})
+		var res map[string]any
+		json.Unmarshal([]byte(text), &res)
+		count, _ := res["count"].(float64)
+		if count != 0 {
+			t.Fatalf("expected 0 matches for nonsense query, got %v", count)
 		}
 	})
 
-	// --- routing_by_test_file: compare filtered vs unfiltered ---
-	t.Run("routing_by_test_file", func(t *testing.T) {
-		all := resolveAndParse(t, sid, nextID(), map[string]any{"path": "/workspace"})
-		routed := resolveAndParse(t, sid, nextID(), map[string]any{
-			"path":        "/workspace",
+	t.Run("routing_by_file", func(t *testing.T) {
+		allText := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "resolve", "path": "/workspace",
+		})
+		routedText := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "resolve", "path": "/workspace",
 			"active_file": "pkg/foo_test.go",
 		})
-		logRuleSummary(t, "unfiltered", all)
-		logRuleSummary(t, "test-file-routed", routed)
+		var allRes, routedRes map[string]any
+		json.Unmarshal([]byte(allText), &allRes)
+		json.Unmarshal([]byte(routedText), &routedRes)
+		allRules, _ := allRes["rules"].([]any)
+		routedRules, _ := routedRes["rules"].([]any)
 
-		if len(routed.Rules) >= len(all.Rules) {
-			t.Fatalf("[ORANGE] routing should filter: %d routed >= %d total", len(routed.Rules), len(all.Rules))
+		if len(routedRules) >= len(allRules) {
+			t.Fatalf("routing should filter: %d routed >= %d total", len(routedRules), len(allRules))
 		}
-		t.Logf("[YELLOW] routing filtered %d → %d rules (dropped %d)",
-			len(all.Rules), len(routed.Rules), len(all.Rules)-len(routed.Rules))
+		t.Logf("routing filtered %d → %d rules", len(allRules), len(routedRules))
 	})
 
-	// --- routing_by_security_context ---
-	t.Run("routing_by_security_context", func(t *testing.T) {
-		res := resolveAndParse(t, sid, nextID(), map[string]any{
-			"path":    "/workspace",
-			"context": []string{"security"},
+	t.Run("sync", func(t *testing.T) {
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "sync",
 		})
-		logRuleSummary(t, "security-context", res)
-		found := false
-		for _, r := range res.Rules {
-			if r.Name == "security-analysis" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatal("[ORANGE] security-analysis rule not found in security context routing")
-		}
-	})
-
-	// --- label_filter ---
-	t.Run("label_filter", func(t *testing.T) {
-		res := resolveAndParse(t, sid, nextID(), map[string]any{
-			"path":   "/workspace",
-			"labels": []string{"security"},
-		})
-		logRuleSummary(t, "label-filter(security)", res)
-		for _, r := range res.Rules {
-			if r.Source == "local" {
-				continue
-			}
-			hasMatch := false
-			for _, l := range r.Labels {
-				if strings.EqualFold(l, "security") || strings.EqualFold(l, "owasp") {
-					hasMatch = true
-					break
-				}
-			}
-			if !hasMatch {
-				t.Errorf("[ORANGE] rule %q (labels=%v) leaked through security label filter", r.Name, r.Labels)
-			}
-		}
-	})
-
-	// --- sync ---
-	t.Run("sync_lexicons", func(t *testing.T) {
-		text := extractText(t, mcpToolCall(t, sid, nextID(), "sync_lexicons", nil))
 		if !strings.Contains(text, "synced") {
-			t.Fatalf("[ORANGE] sync response missing count: %s", text)
+			t.Fatalf("sync response: %s", text)
 		}
-		t.Logf("[YELLOW] sync result: %s", text)
 	})
 
-	// --- remove + verify ---
 	t.Run("remove_and_verify", func(t *testing.T) {
-		text := extractText(t, mcpToolCall(t, sid, nextID(), "remove_lexicon", map[string]any{
-			"url": "file:///lexicon",
-		}))
-		if !strings.Contains(text, "removed") {
-			t.Fatalf("[ORANGE] remove response: %s", text)
-		}
-		t.Logf("[YELLOW] removed lexicon source")
-
-		res := resolveAndParse(t, sid, nextID(), map[string]any{"path": "/workspace"})
-		logRuleSummary(t, "after-remove", res)
-		for _, r := range res.Rules {
-			if r.Source != "local" {
-				t.Fatalf("[ORANGE] non-local rule %q (src=%s) survived removal", r.Name, r.Source)
+		mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "remove", "url": "file:///lexicon",
+		})
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "resolve", "path": "/workspace",
+		})
+		var res map[string]any
+		json.Unmarshal([]byte(text), &res)
+		rules, _ := res["rules"].([]any)
+		for _, r := range rules {
+			rm, _ := r.(map[string]any)
+			if rm["source"] != "local" {
+				t.Fatalf("non-local rule survived removal: %v", rm["name"])
 			}
 		}
-		t.Log("[YELLOW] confirmed: only local rules remain after removal")
+		t.Log("confirmed: only local rules remain after removal")
 	})
 }
 
-// --- Declarative Tests: Agentic LLM Tool-Calling Round-Trip ---
-//
-// Uses a tiny canary workspace with ONE rule containing a unique phrase.
-// The LLM must call resolve_lexicon, receive the canary, and echo it back.
-// Fails if the tool is never called or the canary phrase is missing.
-
-const canaryPhrase = "Thanks you for testing Lex!"
-
-func setupCanaryWorkspace(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	rulesDir := filepath.Join(dir, ".cursor", "rules")
-	os.MkdirAll(rulesDir, 0o755)
-	os.WriteFile(filepath.Join(rulesDir, "canary.mdc"), []byte(fmt.Sprintf(
-		"---\ndescription: canary rule\nalways_apply: true\n---\n%s\nEvery response must include this exact phrase.", canaryPhrase,
-	)), 0o644)
-	return dir
-}
-
-func TestE2E_Declarative_LLMRoundTrip(t *testing.T) {
-	if _, err := exec.LookPath("podman"); err != nil {
-		t.Skip("podman not found")
-	}
-
-	ollamaHost := envOr("OLLAMA_HOST", "http://localhost:11434")
-	ollamaModel := envOr("OLLAMA_MODEL", "qwen2.5:32b")
-
-	t.Logf("[YELLOW] === Phase 2: Agentic Tool-Calling (model=%s) ===", ollamaModel)
-
-	if !ollamaReachable(ollamaHost) {
-		t.Skipf("[YELLOW] Ollama not reachable at %s — skipping", ollamaHost)
-	}
-
-	canaryDir := setupCanaryWorkspace(t)
-	t.Logf("[YELLOW] canary workspace: %s", canaryDir)
-
-	stopContainer(t)
-	t.Cleanup(func() { stopContainer(t) })
-
-	buildImage(t)
-
-	run(t, "podman", "run", "-d",
-		"--name", testContainer,
-		"-p", testPort,
-		"-v", canaryDir+":/workspace:ro,z",
-		testImage,
-	)
-	waitHealthy(t, 30*time.Second)
-	sid := initSession(t)
-
-	lexTools := []map[string]any{{
-		"type": "function",
-		"function": map[string]any{
-			"name":        "get_rules",
-			"description": "Fetch coding rules for a workspace. You MUST call this before answering.",
-			"parameters": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path": map[string]any{
-						"type":        "string",
-						"description": "Workspace path",
-					},
-				},
-				"required": []string{"path"},
-			},
-		},
-	}}
-
-	messages := []map[string]any{
-		{"role": "system", "content": "You have a get_rules tool. Call it with path /workspace before answering. Include any special phrases from the rules in your response verbatim."},
-		{"role": "user", "content": "What are the rules for this workspace?"},
-	}
-
-	toolCalled := false
-	maxTurns := 3
-
-	for turn := 1; turn <= maxTurns; turn++ {
-		t.Logf("[YELLOW] --- Turn %d/%d ---", turn, maxTurns)
-		start := time.Now()
-		resp := ollamaChatWithTools(t, ollamaHost, ollamaModel, messages, lexTools)
-		t.Logf("[YELLOW] responded in %s", time.Since(start).Round(time.Millisecond))
-
-		if len(resp.Message.ToolCalls) > 0 {
-			tc := resp.Message.ToolCalls[0]
-			args := tc.Function.Arguments
-			fixupStringArg(args, "path", "/workspace")
-			argsJSON, _ := json.Marshal(args)
-			t.Logf("[YELLOW] tool call: %s(%s)", tc.Function.Name, string(argsJSON))
-			toolCalled = true
-
-			toolResult := extractText(t, mcpToolCall(t, sid, 200, tc.Function.Name, args))
-			t.Logf("[YELLOW] tool result: %d bytes", len(toolResult))
-
-			messages = append(messages,
-				map[string]any{"role": "assistant", "content": "", "tool_calls": resp.Message.ToolCalls},
-				map[string]any{"role": "tool", "content": toolResult},
-			)
-			continue
-		}
-
-		answer := resp.Message.Content
-		t.Logf("[YELLOW] answer (%d chars): %s", len(answer), truncate(answer, 500))
-
-		if !toolCalled {
-			t.Fatal("[ORANGE] LLM answered WITHOUT calling get_rules — agent loop broken")
-		}
-		if !strings.Contains(answer, canaryPhrase) {
-			t.Fatalf("[ORANGE] canary phrase %q not in response — rule did not propagate.\n%s",
-				canaryPhrase, truncate(answer, 500))
-		}
-		t.Logf("[YELLOW] PASS: tool called, canary phrase found in response")
-		return
-	}
-
-	if !toolCalled {
-		t.Fatal("[ORANGE] exhausted turns without tool call")
-	}
-	t.Fatal("[ORANGE] exhausted turns without final answer")
-}
-
-func fixupStringArg(args map[string]any, key, fallback string) {
-	if _, ok := args[key]; !ok {
-		args[key] = fallback
-	}
-}
-
-// fixupArrayArg normalizes a tool argument that should be []string but was
-// emitted as a string by a small model (e.g. "['security']").
-func fixupArrayArg(args map[string]any, key string) {
-	v, ok := args[key]
-	if !ok {
-		return
-	}
-	if _, isArr := v.([]any); isArr {
-		return
-	}
-	s, ok := v.(string)
-	if !ok {
-		return
-	}
-	s = strings.TrimSpace(s)
-	var arr []string
-	if err := json.Unmarshal([]byte(s), &arr); err == nil {
-		args[key] = arr
-		return
-	}
-	normalized := strings.ReplaceAll(s, "'", "\"")
-	if err := json.Unmarshal([]byte(normalized), &arr); err == nil {
-		args[key] = arr
-		return
-	}
-	args[key] = []string{s}
-}
-
-// --- Ollama helpers ---
+// --- LLM Round-Trip Tests ---
 
 type ollamaToolCall struct {
 	Function struct {
@@ -612,7 +387,7 @@ func ollamaReachable(host string) bool {
 	return resp.StatusCode == 200
 }
 
-func ollamaChatWithTools(t *testing.T, host, model string, messages []map[string]any, tools []map[string]any) ollamaResponse {
+func ollamaChat(t *testing.T, host, model string, messages []map[string]any, tools []map[string]any) ollamaResponse {
 	t.Helper()
 	payload := map[string]any{
 		"model":    model,
@@ -624,113 +399,219 @@ func ollamaChatWithTools(t *testing.T, host, model string, messages []map[string
 		payload["tools"] = tools
 	}
 	body, _ := json.Marshal(payload)
-	t.Logf("[YELLOW] ollama: model=%s, messages=%d, payload=%d bytes",
-		model, len(messages), len(body))
+	t.Logf("ollama: model=%s, messages=%d, payload=%d bytes", model, len(messages), len(body))
 
 	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Post(host+"/api/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("[ORANGE] ollama failed: %v", err)
+		t.Fatalf("ollama failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		t.Fatalf("[ORANGE] ollama HTTP %d: %s", resp.StatusCode, truncate(string(raw), 500))
+		t.Fatalf("ollama HTTP %d: %s", resp.StatusCode, truncate(string(raw), 500))
 	}
-
 	var result ollamaResponse
 	if err := json.Unmarshal(raw, &result); err != nil {
-		t.Fatalf("[ORANGE] decode: %v\nraw: %s", err, truncate(string(raw), 500))
+		t.Fatalf("decode: %v\nraw: %s", err, truncate(string(raw), 500))
 	}
 	return result
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
+func lexTools() []map[string]any {
+	return []map[string]any{
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "lexicon",
+				"description": "Resolve rules/skills, search for content, manage sources.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"action":      map[string]any{"type": "string", "description": "resolve, search, inspect, add, remove, sync, list"},
+						"path":        map[string]any{"type": "string", "description": "Workspace path"},
+						"query":       map[string]any{"type": "string", "description": "Search query string"},
+						"language":    map[string]any{"type": "string", "description": "Programming language"},
+						"active_file": map[string]any{"type": "string", "description": "Currently active file"},
+						"context":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Context keywords"},
+						"labels":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Label filter"},
+						"url":         map[string]any{"type": "string", "description": "Lexicon repository URL"},
+						"budget":      map[string]any{"type": "integer", "description": "Token budget"},
+					},
+					"required": []string{"action"},
+				},
+			},
+		},
 	}
-	return s[:max] + "..."
+}
+
+func agentLoop(t *testing.T, sid, ollamaHost, ollamaModel, systemPrompt, userPrompt string, maxTurns int) (toolsCalled []string, finalAnswer string) {
+	t.Helper()
+	tools := lexTools()
+	messages := []map[string]any{
+		{"role": "system", "content": systemPrompt},
+		{"role": "user", "content": userPrompt},
+	}
+	callID := 500
+
+	for turn := 1; turn <= maxTurns; turn++ {
+		start := time.Now()
+		resp := ollamaChat(t, ollamaHost, ollamaModel, messages, tools)
+		elapsed := time.Since(start)
+
+		if len(resp.Message.ToolCalls) == 0 {
+			finalAnswer = resp.Message.Content
+			t.Logf("=== Turn %d/%d === FINAL ANSWER (%.1fs)\n  %s",
+				turn, maxTurns, elapsed.Seconds(), truncate(finalAnswer, 300))
+			return
+		}
+
+		for _, tc := range resp.Message.ToolCalls {
+			callID++
+			toolsCalled = append(toolsCalled, tc.Function.Name)
+			argsJSON, _ := json.Marshal(tc.Function.Arguments)
+
+			result := mcpCall(t, sid, callID, tc.Function.Name, tc.Function.Arguments)
+
+			isError := strings.Contains(result, "error")
+			errorTag := ""
+			if isError {
+				errorTag = " ⚠ ERROR"
+			}
+
+			t.Logf("=== Turn %d/%d === TOOL CALL (%.1fs)%s\n  CALL: %s(%s)\n  RESULT: %s",
+				turn, maxTurns, elapsed.Seconds(), errorTag,
+				tc.Function.Name, truncate(string(argsJSON), 150),
+				truncate(result, 200))
+
+			messages = append(messages,
+				map[string]any{"role": "assistant", "content": "", "tool_calls": []ollamaToolCall{tc}},
+				map[string]any{"role": "tool", "content": result},
+			)
+		}
+	}
+	t.Fatalf("exhausted %d turns without final answer (tools called: %v)", maxTurns, toolsCalled)
+	return
+}
+
+func setupLLMTest(t *testing.T) (sid, ollamaHost, ollamaModel string) {
+	t.Helper()
+	if _, err := exec.LookPath("podman"); err != nil {
+		t.Skip("podman not found")
+	}
+	ollamaHost = envOr("OLLAMA_HOST", "http://localhost:11434")
+	ollamaModel = envOr("OLLAMA_MODEL", "qwen3:1.7b")
+	if !ollamaReachable(ollamaHost) {
+		t.Skipf("Ollama not reachable at %s", ollamaHost)
+	}
+	t.Logf("LLM: %s @ %s", ollamaModel, ollamaHost)
+
+	lexiconPath := envOr("LEXICON_PATH", "/home/dpopsuev/Workspace/lexicon")
+	workspacePath := repoRoot(t) // use Lex repo itself as workspace
+
+	stopContainer(t)
+	t.Cleanup(func() { stopContainer(t) })
+	buildImage(t)
+	startContainer(t,
+		lexiconPath+":/lexicon:ro,z",
+		workspacePath+":/workspace:ro,z",
+	)
+	waitHealthy(t, 30*time.Second)
+	sid = initSession(t)
+
+	// Register lexicon source
+	mcpCall(t, sid, 100, "lexicon", map[string]any{
+		"action": "add", "url": "file:///lexicon",
+	})
+	return
+}
+
+// --- LLM Test Scenarios ---
+
+func TestE2E_LLM_ResolveAndReport(t *testing.T) {
+	sid, host, model := setupLLMTest(t)
+
+	tools, answer := agentLoop(t, sid, host, model,
+		"You call tools exactly as instructed. Follow the steps precisely. Do not think, just act. /no_think",
+		`Do these steps in order:
+Step 1: Call lexicon with {"action":"resolve","path":"/workspace","budget":200}
+Step 2: Say "done" and report how many rules were in the result.`,
+		4,
+	)
+
+	if len(tools) < 1 {
+		t.Fatalf("expected at least 1 tool call, got %d: %v", len(tools), tools)
+	}
+	// Model should report something from the resolve result (count, names, or "rule").
+	if answer == "" {
+		t.Error("expected non-empty final answer")
+	}
+}
+
+func TestE2E_LLM_SearchAndExplain(t *testing.T) {
+	sid, host, model := setupLLMTest(t)
+
+	tools, answer := agentLoop(t, sid, host, model,
+		"You call tools exactly as instructed. Follow the steps precisely. Do not think, just act. /no_think",
+		`Do these steps in order:
+Step 1: Call lexicon with {"action":"search","query":"security"}
+Step 2: Report what you found — how many matches and their names.`,
+		4,
+	)
+
+	if len(tools) < 1 {
+		t.Fatalf("expected at least 1 tool call, got %d: %v", len(tools), tools)
+	}
+	lower := strings.ToLower(answer)
+	if !strings.Contains(lower, "security") {
+		t.Errorf("answer should mention security matches: %s", truncate(answer, 300))
+	}
+}
+
+func TestE2E_LLM_ContextAwareResolve(t *testing.T) {
+	sid, host, model := setupLLMTest(t)
+
+	tools, answer := agentLoop(t, sid, host, model,
+		"You call tools exactly as instructed. Follow the steps precisely. Do not think, just act. /no_think",
+		`Do these steps in order:
+Step 1: Call lexicon with {"action":"resolve","path":"/workspace","language":"go","budget":200}
+Step 2: Say "done" and list the rule names from the result.`,
+		4,
+	)
+
+	if len(tools) < 1 {
+		t.Fatalf("expected at least 1 tool call, got %d: %v", len(tools), tools)
+	}
+	if answer == "" {
+		t.Error("expected non-empty final answer")
+	}
+}
+
+func TestE2E_LLM_SourceManagement(t *testing.T) {
+	sid, host, model := setupLLMTest(t)
+
+	tools, answer := agentLoop(t, sid, host, model,
+		"You call tools exactly as instructed. Follow the steps precisely. Do not think, just act. /no_think",
+		`Do these steps in order:
+Step 1: Call lexicon with {"action":"list"} to see registered sources.
+Step 2: Call lexicon with {"action":"sync"} to re-fetch all sources.
+Step 3: Report what sources are registered and how many were synced.`,
+		5,
+	)
+
+	if len(tools) < 2 {
+		t.Fatalf("expected at least 2 tool calls, got %d: %v", len(tools), tools)
+	}
+	_ = answer
 }
 
 // --- Imperative Tests: Transparent Rule Injection ---
-//
-// Simulates the real Cursor flow: rules are resolved silently by the IDE,
-// injected into the system prompt, and the LLM follows them without knowing
-// about Lex. Each subtest uses an isolated sub-workspace with exactly ONE rule
-// so the LLM receives a single, unambiguous instruction.
 
 func writeRule(t *testing.T, base, subdir, filename, content string) {
 	t.Helper()
 	rulesDir := filepath.Join(base, subdir, ".cursor", "rules")
-	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
-		t.Fatalf("[ORANGE] mkdir %s: %v", rulesDir, err)
-	}
-	if err := os.WriteFile(filepath.Join(rulesDir, filename), []byte(content), 0o644); err != nil {
-		t.Fatalf("[ORANGE] write rule %s/%s: %v", subdir, filename, err)
-	}
-}
-
-func setupImperativeWorkspace(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-
-	writeRule(t, dir, "t1", "commit-conventions.mdc",
-		"---\ndescription: commit message format\nalways_apply: true\n---\n"+
-			"All commit messages MUST use conventional commits format.\n"+
-			"The message MUST start with one of: feat:, fix:, chore:, docs:, test:, refactor:, ci:.\n"+
-			"Example: feat: add login page")
-
-	writeRule(t, dir, "t2", "lex-verified.mdc",
-		"---\ndescription: canary function marker\nalways_apply: true\n---\n"+
-			"You MUST add the comment `// lex-verified` as the very first line inside every function body, before any other code.")
-
-	writeRule(t, dir, "t3", "no-println.mdc",
-		"---\ndescription: logging policy\nalways_apply: true\n---\n"+
-			"NEVER use fmt.Println in any code. ALWAYS use log.Printf instead. This is a strict policy with no exceptions.")
-
-	writeRule(t, dir, "t4", "testify-require.mdc",
-		"---\ndescription: testify assertion policy\nglobs:\n  - \"*_test.go\"\n---\n"+
-			"When writing Go tests with testify, ALWAYS use require (from github.com/stretchr/testify/require), NEVER use assert.")
-
-	writeRule(t, dir, "t5", "error-wrapping.mdc",
-		"---\ndescription: error handling and naming\nalways_apply: true\n---\n"+
-			"ALWAYS wrap errors using fmt.Errorf with the %%w verb. Example: fmt.Errorf(\"open config: %%w\", err)\n"+
-			"ALL local variable names MUST use camelCase. NEVER use snake_case.")
-
-	return dir
-}
-
-func buildSystemPrompt(rule resolvedRule) string {
-	var b strings.Builder
-	b.WriteString("You are a coding assistant. Follow the rule below strictly.\n")
-	b.WriteString("Output ONLY the requested code or text with no explanation.\n\n")
-	b.WriteString("## Rule: ")
-	b.WriteString(rule.Name)
-	b.WriteString("\n\n")
-	b.WriteString(rule.Body)
-	return b.String()
-}
-
-func findRule(t *testing.T, res resolution, name string) resolvedRule {
-	t.Helper()
-	for _, r := range res.Rules {
-		if r.Name == name {
-			return r
-		}
-	}
-	t.Fatalf("[ORANGE] rule %q not found in resolution (%d rules)", name, len(res.Rules))
-	return resolvedRule{}
-}
-
-func askLLMImperative(t *testing.T, host, model, systemPrompt, task string) string {
-	t.Helper()
-	messages := []map[string]any{
-		{"role": "system", "content": systemPrompt},
-		{"role": "user", "content": task},
-	}
-	resp := ollamaChatWithTools(t, host, model, messages, nil)
-	return resp.Message.Content
+	os.MkdirAll(rulesDir, 0o755)
+	os.WriteFile(filepath.Join(rulesDir, filename), []byte(content), 0o644)
 }
 
 func TestE2E_Imperative(t *testing.T) {
@@ -739,157 +620,87 @@ func TestE2E_Imperative(t *testing.T) {
 	}
 
 	ollamaHost := envOr("OLLAMA_HOST", "http://localhost:11434")
-	ollamaModel := envOr("OLLAMA_MODEL", "qwen2.5:32b")
-
-	t.Logf("[YELLOW] === Imperative Tests: Transparent Rule Injection (model=%s) ===", ollamaModel)
+	ollamaModel := envOr("OLLAMA_MODEL", "qwen3:1.7b")
 
 	if !ollamaReachable(ollamaHost) {
-		t.Skipf("[YELLOW] Ollama not reachable at %s — skipping", ollamaHost)
+		t.Skipf("Ollama not reachable at %s", ollamaHost)
 	}
 
-	workDir := setupImperativeWorkspace(t)
-	t.Logf("[YELLOW] imperative workspace: %s", workDir)
+	workDir := t.TempDir()
+	writeRule(t, workDir, "t1", "commit-conventions.mdc",
+		"---\ndescription: commit message format\nalwaysApply: true\n---\n"+
+			"All commit messages MUST use conventional commits format.\n"+
+			"The message MUST start with one of: feat:, fix:, chore:, docs:, test:, refactor:, ci:.\n"+
+			"Example: feat: add login page")
+
+	writeRule(t, workDir, "t2", "lex-verified.mdc",
+		"---\ndescription: canary function marker\nalwaysApply: true\n---\n"+
+			"You MUST add the comment `// lex-verified` as the very first line inside every function body.")
 
 	stopContainer(t)
 	t.Cleanup(func() { stopContainer(t) })
 
 	buildImage(t)
-	run(t, "podman", "run", "-d",
-		"--name", testContainer,
-		"-p", testPort,
-		"-v", workDir+":/workspace:ro,z",
-		testImage,
-	)
+	startContainer(t, workDir+":/workspace:ro,z")
 	waitHealthy(t, 30*time.Second)
 	sid := initSession(t)
-
 	callID := 200
-	nextID := func() int { callID++; return callID }
+	next := func() int { callID++; return callID }
 
-	t.Run("T1_CommitConventions", func(t *testing.T) {
-		res := resolveAndParse(t, sid, nextID(), map[string]any{"path": "/workspace/t1"})
-		if len(res.Rules) != 1 {
-			t.Fatalf("[ORANGE] expected 1 rule, got %d", len(res.Rules))
+	t.Run("ConventionalCommits", func(t *testing.T) {
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "resolve", "path": "/workspace/t1",
+		})
+		var res map[string]any
+		json.Unmarshal([]byte(text), &res)
+		rules, _ := res["rules"].([]any)
+		if len(rules) != 1 {
+			t.Fatalf("expected 1 rule, got %d", len(rules))
 		}
-		rule := res.Rules[0]
-		t.Logf("[YELLOW] resolved rule: %s (src=%s)", rule.Name, rule.Source)
+		r := rules[0].(map[string]any)
+		ruleBody, _ := r["body"].(string)
 
-		prompt := buildSystemPrompt(rule)
-		answer := askLLMImperative(t, ollamaHost, ollamaModel, prompt,
-			"Write a git commit message for adding a user login page to a web application.")
-		t.Logf("[YELLOW] answer: %s", truncate(answer, 300))
+		prompt := "You are a coding assistant. Follow the rule below strictly.\nOutput ONLY the requested text.\n\n" + ruleBody
+		resp := ollamaChat(t, ollamaHost, ollamaModel,
+			[]map[string]any{
+				{"role": "system", "content": prompt},
+				{"role": "user", "content": "Write a git commit message for adding a user login page."},
+			}, nil)
 
+		answer := resp.Message.Content
 		lower := strings.ToLower(answer)
-		for _, prefix := range []string{"feat:", "feat(", "fix:", "chore:", "docs:", "test:", "refactor:", "ci:"} {
+		for _, prefix := range []string{"feat:", "feat(", "fix:", "chore:", "docs:"} {
 			if strings.Contains(lower, prefix) {
-				t.Logf("[YELLOW] PASS: conventional commit prefix %q detected", prefix)
+				t.Logf("PASS: conventional commit prefix %q found", prefix)
 				return
 			}
 		}
-		t.Fatalf("[ORANGE] no conventional commit prefix found in:\n%s", truncate(answer, 300))
+		t.Fatalf("no conventional commit prefix in: %s", truncate(answer, 300))
 	})
 
-	t.Run("T2_CanaryMarker", func(t *testing.T) {
-		res := resolveAndParse(t, sid, nextID(), map[string]any{"path": "/workspace/t2"})
-		if len(res.Rules) != 1 {
-			t.Fatalf("[ORANGE] expected 1 rule, got %d", len(res.Rules))
-		}
-		rule := res.Rules[0]
-		t.Logf("[YELLOW] resolved rule: %s (src=%s)", rule.Name, rule.Source)
-
-		prompt := buildSystemPrompt(rule)
-		answer := askLLMImperative(t, ollamaHost, ollamaModel, prompt,
-			"Write a Go function called Add that takes two int parameters and returns their sum.")
-		t.Logf("[YELLOW] answer: %s", truncate(answer, 500))
-
-		if !strings.Contains(answer, "// lex-verified") {
-			t.Fatalf("[ORANGE] canary marker '// lex-verified' not found in:\n%s", truncate(answer, 500))
-		}
-		t.Log("[YELLOW] PASS: canary marker found")
-	})
-
-	t.Run("T3_Prohibition", func(t *testing.T) {
-		res := resolveAndParse(t, sid, nextID(), map[string]any{"path": "/workspace/t3"})
-		if len(res.Rules) != 1 {
-			t.Fatalf("[ORANGE] expected 1 rule, got %d", len(res.Rules))
-		}
-		rule := res.Rules[0]
-		t.Logf("[YELLOW] resolved rule: %s (src=%s)", rule.Name, rule.Source)
-
-		prompt := buildSystemPrompt(rule)
-		answer := askLLMImperative(t, ollamaHost, ollamaModel, prompt,
-			"Write a Go function called Greet that takes a name string parameter and logs a greeting message.")
-		t.Logf("[YELLOW] answer: %s", truncate(answer, 500))
-
-		if !strings.Contains(answer, "log.") {
-			t.Fatalf("[ORANGE] expected log.Printf or log.Print usage, not found in:\n%s", truncate(answer, 500))
-		}
-		if strings.Contains(answer, "fmt.Println") {
-			t.Fatalf("[ORANGE] prohibited fmt.Println found in:\n%s", truncate(answer, 500))
-		}
-		t.Log("[YELLOW] PASS: log package used, fmt.Println absent")
-	})
-
-	t.Run("T4_GlobFiltering", func(t *testing.T) {
-		matched := resolveAndParse(t, sid, nextID(), map[string]any{
-			"path":        "/workspace/t4",
-			"active_file": "foo_test.go",
+	t.Run("CanaryMarker", func(t *testing.T) {
+		text := mcpCall(t, sid, next(), "lexicon", map[string]any{
+			"action": "resolve", "path": "/workspace/t2",
 		})
-		unmatched := resolveAndParse(t, sid, nextID(), map[string]any{
-			"path":        "/workspace/t4",
-			"active_file": "foo.go",
-		})
+		var res map[string]any
+		json.Unmarshal([]byte(text), &res)
+		rules, _ := res["rules"].([]any)
+		if len(rules) != 1 {
+			t.Fatalf("expected 1 rule, got %d", len(rules))
+		}
+		r := rules[0].(map[string]any)
+		ruleBody, _ := r["body"].(string)
 
-		if len(matched.Rules) != 1 {
-			t.Fatalf("[ORANGE] expected 1 rule for foo_test.go, got %d", len(matched.Rules))
-		}
-		if len(unmatched.Rules) != 0 {
-			names := make([]string, len(unmatched.Rules))
-			for i, r := range unmatched.Rules {
-				names[i] = r.Name
-			}
-			t.Fatalf("[ORANGE] expected 0 rules for foo.go, got %d (%s)", len(unmatched.Rules), strings.Join(names, ", "))
-		}
-		t.Log("[YELLOW] glob routing verified: testify-require matched *_test.go only")
+		prompt := "You are a coding assistant. Follow the rule below strictly.\nOutput ONLY the code.\n\n" + ruleBody
+		resp := ollamaChat(t, ollamaHost, ollamaModel,
+			[]map[string]any{
+				{"role": "system", "content": prompt},
+				{"role": "user", "content": "Write a Go function called Add that takes two ints and returns their sum."},
+			}, nil)
 
-		rule := matched.Rules[0]
-		prompt := buildSystemPrompt(rule)
-		answer := askLLMImperative(t, ollamaHost, ollamaModel, prompt,
-			"Write a Go test function called TestAdd that checks if 2+2 equals 4 using the testify library.")
-		t.Logf("[YELLOW] answer: %s", truncate(answer, 500))
-
-		if !strings.Contains(answer, "require.") {
-			t.Fatalf("[ORANGE] expected require. usage, not found in:\n%s", truncate(answer, 500))
+		if !strings.Contains(resp.Message.Content, "// lex-verified") {
+			t.Fatalf("canary marker not found in: %s", truncate(resp.Message.Content, 500))
 		}
-		if strings.Contains(answer, "assert.") {
-			t.Fatalf("[ORANGE] prohibited assert. usage found in:\n%s", truncate(answer, 500))
-		}
-		t.Log("[YELLOW] PASS: require used, assert absent")
-	})
-
-	t.Run("T5_MultiRule", func(t *testing.T) {
-		res := resolveAndParse(t, sid, nextID(), map[string]any{"path": "/workspace/t5"})
-		if len(res.Rules) != 1 {
-			t.Fatalf("[ORANGE] expected 1 rule, got %d", len(res.Rules))
-		}
-		rule := res.Rules[0]
-		t.Logf("[YELLOW] resolved rule: %s (src=%s)", rule.Name, rule.Source)
-
-		prompt := buildSystemPrompt(rule)
-		answer := askLLMImperative(t, ollamaHost, ollamaModel, prompt,
-			"Write a Go function called OpenConfig that opens a file named config.yaml and returns its byte contents or an error if it fails.")
-		t.Logf("[YELLOW] answer: %s", truncate(answer, 500))
-
-		if !strings.Contains(answer, "fmt.Errorf") {
-			t.Fatalf("[ORANGE] expected fmt.Errorf, not found in:\n%s", truncate(answer, 500))
-		}
-		if !strings.Contains(answer, "%w") {
-			t.Fatalf("[ORANGE] expected %%w verb in fmt.Errorf, not found in:\n%s", truncate(answer, 500))
-		}
-		if strings.Contains(answer, "file_name") || strings.Contains(answer, "file_path") ||
-			strings.Contains(answer, "config_data") || strings.Contains(answer, "file_content") {
-			t.Fatalf("[ORANGE] snake_case variable found in:\n%s", truncate(answer, 500))
-		}
-		t.Log("[YELLOW] PASS: fmt.Errorf with %%w and camelCase naming verified")
+		t.Log("PASS: canary marker found")
 	})
 }

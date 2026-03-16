@@ -1,0 +1,12 @@
+FROM golang:1.25-alpine AS build
+RUN apk add --no-cache git
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -trimpath -o /lex ./cmd/lex
+
+FROM alpine:latest
+RUN apk add --no-cache git
+COPY --from=build /lex /usr/local/bin/lex
+ENTRYPOINT ["lex", "serve", "--transport", "http", "--addr", ":8082"]
