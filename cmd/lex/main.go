@@ -161,6 +161,42 @@ var listCmd = &cobra.Command{
 	},
 }
 
+var searchFlags struct {
+	sources []string
+	format  string
+}
+
+var searchCmd = &cobra.Command{
+	Use:   "search <query>",
+	Short: "Search for rules and skills by substring across loaded lexicons",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := newService()
+		matches, err := svc.Search(cmd.Context(), args[0], searchFlags.sources)
+		if err != nil {
+			return err
+		}
+		if len(matches) == 0 {
+			fmt.Println("No matches found. Use 'lex list' to see available sources.")
+			return nil
+		}
+		if searchFlags.format == "json" {
+			return printJSON(matches)
+		}
+		fmt.Printf("Found %d match(es):\n", len(matches))
+		for _, m := range matches {
+			fmt.Printf("  [%s] %s\n", m.Type, m.Name)
+			fmt.Printf("    → %s\n", m.Snippet)
+			fmt.Printf("    Source: %s", m.Source)
+			if len(m.Labels) > 0 {
+				fmt.Printf("  Labels: [%s]", strings.Join(m.Labels, ","))
+			}
+			fmt.Println()
+		}
+		return nil
+	},
+}
+
 var resolveFlags struct {
 	path       string
 	filter     string
@@ -435,7 +471,9 @@ var bridgeCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(versionCmd, serveCmd, addCmd, syncCmd, listCmd, removeCmd, resolveCmd, enrichCmd, initCmd, bridgeCmd, configCmd, enableCmd, disableCmd)
+	rootCmd.AddCommand(versionCmd, serveCmd, addCmd, syncCmd, listCmd, removeCmd, resolveCmd, searchCmd, enrichCmd, initCmd, bridgeCmd, configCmd, enableCmd, disableCmd)
+	searchCmd.Flags().StringSliceVar(&searchFlags.sources, "source", nil, "Filter by source name(s)")
+	searchCmd.Flags().StringVar(&searchFlags.format, "format", "text", "Output format: text, json")
 	configCmd.AddCommand(configSetCmd)
 	bridgeCmd.Flags().BoolVar(&bridgeFlags.global, "global", false, "Install to ~/.cursor/rules/ (all workspaces)")
 	enrichCmd.Flags().StringVar(&enrichFlags.format, "format", "text", "Output format: text, gemini, agents-md")

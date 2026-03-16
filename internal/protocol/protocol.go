@@ -115,6 +115,10 @@ func (s *Service) InstallBridgeRule(_ context.Context, path string, global bool)
 	return cursor.WriteBridgeRule(s.resolvePath(path), false)
 }
 
+func (s *Service) Search(ctx context.Context, query string, sources []string) ([]lexicon.Match, error) {
+	return lexicon.Search(ctx, s.reg, s.resolvePath(""), query, sources)
+}
+
 // EnrichOpts controls enrichment output.
 type EnrichOpts struct {
 	Format   string // "text", "gemini", "agents-md"

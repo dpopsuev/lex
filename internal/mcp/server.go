@@ -33,6 +33,7 @@ func NewServer(reg *registry.Registry, workspaceRoots []string, version string) 
 		Name: "lexicon",
 		Description: "Resolve effective rules and skills by merging local .cursor/ with remote lexicons. " +
 			"Actions: resolve (merge local+remote with path/label filters), " +
+			"search (find rules/skills by substring query across loaded sources), " +
 			"inspect (list rules/skills/templates from registered sources), " +
 			"add (register remote repo), remove (delete source), " +
 			"enable/disable (toggle without removing), sync (re-fetch all), list (show sources).",
@@ -55,7 +56,7 @@ type handler struct {
 // --- lexicon tool (consolidated resolve + inspect + manage) ---
 
 type lexiconInput struct {
-	Action     string   `json:"action" jsonschema:"required,resolve | inspect | add | remove | enable | disable | sync | list"`
+	Action     string   `json:"action" jsonschema:"required,resolve | search | inspect | add | remove | enable | disable | sync | list"`
 	Path       string   `json:"path,omitempty" jsonschema:"workspace path for resolve context"`
 	Labels     []string `json:"labels,omitempty" jsonschema:"filter rules/skills by labels (resolve)"`
 	Filter     string   `json:"filter,omitempty" jsonschema:"glob pattern to filter files (resolve)"`
@@ -66,6 +67,8 @@ type lexiconInput struct {
 	URL        string   `json:"url,omitempty" jsonschema:"lexicon repository URL (add/remove/enable/disable/inspect)"`
 	Ref        string   `json:"ref,omitempty" jsonschema:"git ref to pin (add)"`
 	Priority   int      `json:"priority,omitempty" jsonschema:"source priority, higher wins on conflict (add)"`
+	Query      string   `json:"query,omitempty" jsonschema:"substring to search for across loaded lexicons (search)"`
+	Sources    []string `json:"sources,omitempty" jsonschema:"source names to search within (search, default: all)"`
 	Language   string   `json:"language,omitempty" jsonschema:"programming language for context-aware scoring (resolve)"`
 	Files      []string `json:"files,omitempty" jsonschema:"touched file paths for context-aware scoring (resolve)"`
 	Keywords   []string `json:"keywords,omitempty" jsonschema:"domain keywords for context-aware scoring (resolve)"`
@@ -76,6 +79,8 @@ func (h *handler) handleLexicon(ctx context.Context, req *sdkmcp.CallToolRequest
 	switch in.Action {
 	case "resolve":
 		return h.doResolve(ctx, in)
+	case "search":
+		return h.doSearch(ctx, in)
 	case "inspect":
 		return h.doInspect(ctx, in)
 	case "add":
@@ -91,8 +96,19 @@ func (h *handler) handleLexicon(ctx context.Context, req *sdkmcp.CallToolRequest
 	case "list":
 		return h.doList(ctx)
 	default:
-		return nil, nil, fmt.Errorf("unknown lexicon action %q (valid: resolve, inspect, add, remove, enable, disable, sync, list)", in.Action)
+		return nil, nil, fmt.Errorf("unknown lexicon action %q (valid: resolve, search, inspect, add, remove, enable, disable, sync, list)", in.Action)
 	}
+}
+
+func (h *handler) doSearch(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
+	if in.Query == "" {
+		return nil, nil, fmt.Errorf("query is required for search")
+	}
+	matches, err := h.svc.Search(ctx, in.Query, in.Sources)
+	if err != nil {
+		return nil, nil, fmt.Errorf("search: %w", err)
+	}
+	return jsonResult(map[string]any{"query": in.Query, "count": len(matches), "matches": matches})
 }
 
 func (h *handler) doResolve(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
