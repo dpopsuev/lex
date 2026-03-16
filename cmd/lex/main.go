@@ -23,6 +23,7 @@ import (
 	"github.com/dpopsuev/lex/internal/lexicon"
 	lexmcp "github.com/dpopsuev/lex/internal/mcp"
 	"github.com/dpopsuev/lex/internal/protocol"
+	"github.com/dpopsuev/lex/internal/proxy"
 	"github.com/dpopsuev/lex/internal/registry"
 )
 
@@ -56,6 +57,8 @@ var serveFlags struct {
 	workspaces []string
 	transport  string
 	addr       string
+	mode       string
+	upstream   string
 }
 
 var serveCmd = &cobra.Command{
@@ -69,6 +72,25 @@ var serveCmd = &cobra.Command{
 Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		initLogger()
+
+		if serveFlags.mode == "proxy" {
+			if serveFlags.upstream == "" {
+				return fmt.Errorf("--upstream is required for proxy mode")
+			}
+			svc := newService()
+			cwd, _ := os.Getwd()
+			handler, err := proxy.New(serveFlags.upstream, svc, protocol.EnrichOpts{
+				Format:   "text",
+				Language: detectLanguage(cwd),
+				Budget:   2000,
+			})
+			if err != nil {
+				return fmt.Errorf("proxy: %w", err)
+			}
+			slog.Info("lex proxy starting", "upstream", serveFlags.upstream, "addr", serveFlags.addr)
+			return http.ListenAndServe(serveFlags.addr, handler)
+		}
+
 		roots := serveFlags.workspaces
 		if len(roots) == 0 {
 			cwd, _ := os.Getwd()
@@ -424,6 +446,8 @@ func init() {
 	serveCmd.Flags().StringArrayVar(&serveFlags.workspaces, "workspace", nil, "Workspace root paths (repeatable; defaults to cwd)")
 	serveCmd.Flags().StringVar(&serveFlags.transport, "transport", envOr("LEX_TRANSPORT", "stdio"), "Transport type: stdio, http ($LEX_TRANSPORT)")
 	serveCmd.Flags().StringVar(&serveFlags.addr, "addr", envOr("LEX_ADDR", ":8082"), "Listen address for http transport ($LEX_ADDR)")
+	serveCmd.Flags().StringVar(&serveFlags.mode, "mode", "", "Server mode: mcp (default) or proxy")
+	serveCmd.Flags().StringVar(&serveFlags.upstream, "upstream", "", "Upstream LLM API URL for proxy mode")
 	addCmd.Flags().StringVar(&addFlags.ref, "ref", "", "Branch or tag to clone")
 	addCmd.Flags().IntVar(&addFlags.priority, "priority", 25, "Priority (higher wins on conflict)")
 	resolveCmd.Flags().StringVar(&resolveFlags.path, "path", "", "Workspace root path (defaults to cwd)")
