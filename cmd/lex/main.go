@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -28,6 +29,13 @@ import (
 )
 
 var Version = "dev"
+
+// Structured logging key constants (sloglint no-raw-keys).
+const (
+	logKeyUpstream  = "upstream"
+	logKeyAddr      = "addr"
+	logKeyTransport = "transport"
+)
 
 func newService() *protocol.Service {
 	return protocol.New(registry.New(envOr("LEX_ROOT", registry.DefaultRoot())), nil)
@@ -75,7 +83,7 @@ Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config
 
 		if serveFlags.mode == "proxy" {
 			if serveFlags.upstream == "" {
-				return fmt.Errorf("--upstream is required for proxy mode")
+				return fmt.Errorf("--upstream is required for proxy mode") //nolint:err113 // user-facing error message
 			}
 			svc := newService()
 			cwd, _ := os.Getwd()
@@ -87,8 +95,9 @@ Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config
 			if err != nil {
 				return fmt.Errorf("proxy: %w", err)
 			}
-			slog.Info("lex proxy starting", "upstream", serveFlags.upstream, "addr", serveFlags.addr)
-			return http.ListenAndServe(serveFlags.addr, handler)
+			slog.LogAttrs(cmd.Context(), slog.LevelInfo, "lex proxy starting", slog.String(logKeyUpstream, serveFlags.upstream), slog.String(logKeyAddr, serveFlags.addr))
+			srv := &http.Server{Addr: serveFlags.addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+			return srv.ListenAndServe()
 		}
 
 		roots := serveFlags.workspaces
@@ -103,10 +112,11 @@ Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config
 				func(r *http.Request) *sdkmcp.Server { return srv },
 				nil,
 			)
-			slog.Info("lex server starting", "transport", "http", "addr", serveFlags.addr)
-			return http.ListenAndServe(serveFlags.addr, handler)
+			slog.LogAttrs(cmd.Context(), slog.LevelInfo, "lex server starting", slog.String(logKeyTransport, "http"), slog.String(logKeyAddr, serveFlags.addr))
+			srv := &http.Server{Addr: serveFlags.addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+			return srv.ListenAndServe()
 		}
-		slog.Info("lex server starting", "transport", "stdio")
+		slog.LogAttrs(cmd.Context(), slog.LevelInfo, "lex server starting", slog.String(logKeyTransport, "stdio"))
 		return srv.Run(context.Background(), &sdkmcp.StdioTransport{})
 	},
 }
@@ -361,7 +371,7 @@ defaults:
 
 routing: []
 `
-		if err := os.WriteFile(yamlPath, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(yamlPath, []byte(content), 0o644); err != nil { //nolint:gosec // G306: scaffolded lexicon.yaml should be world-readable for version control
 			return err
 		}
 	}

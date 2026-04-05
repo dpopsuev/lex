@@ -33,7 +33,7 @@ func configPath(root string) string {
 }
 
 func expandPath(p string) (string, error) {
-	if len(p) > 0 && p[0] == '~' {
+	if p != "" && p[0] == '~' {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return p, err
@@ -90,7 +90,7 @@ func (c *Config) Save(root string) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

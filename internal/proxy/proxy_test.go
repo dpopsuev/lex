@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 )
@@ -84,7 +85,7 @@ func TestEnrichBody_EmptyEnrichment(t *testing.T) {
 	body := []byte(`{"model":"claude-3","system":"Be helpful."}`)
 
 	enriched := p.enrichBodyWith(body, "")
-	if string(enriched) != string(body) {
+	if !bytes.Equal(enriched, body) {
 		t.Fatalf("empty enrichment should return body unchanged")
 	}
 }

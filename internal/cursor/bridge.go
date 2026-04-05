@@ -41,7 +41,7 @@ func WriteBridgeRule(dir string, global bool) (*BridgeRuleResult, error) {
 		return &BridgeRuleResult{Path: target, Created: false}, nil
 	}
 
-	if err := os.WriteFile(target, []byte(bridgeRuleContent), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte(bridgeRuleContent), 0o644); err != nil { //nolint:gosec // G306: bridge rule file must be world-readable for Cursor IDE
 		return nil, err
 	}
 	return &BridgeRuleResult{Path: target, Created: true}, nil

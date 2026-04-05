@@ -14,6 +14,9 @@ import (
 	"github.com/dpopsuev/lex/internal/protocol"
 )
 
+// Structured logging key constants (sloglint no-raw-keys).
+const logKeyError = "error"
+
 // New creates an HTTP reverse proxy that intercepts LLM API requests
 // and injects enrichment rules into the system prompt.
 func New(upstream string, svc *protocol.Service, opts protocol.EnrichOpts) (http.Handler, error) {
@@ -55,7 +58,7 @@ func (p *enrichProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	r.Body.Close()
 	if err != nil {
-		slog.Error("proxy: read body", "error", err)
+		slog.LogAttrs(r.Context(), slog.LevelError, "proxy: read body", slog.Any(logKeyError, err))
 		p.proxy.ServeHTTP(w, r)
 		return
 	}
@@ -100,7 +103,7 @@ func (p *enrichProxy) enrichBodyWith(body []byte, enrichment string) []byte {
 	}
 
 	// OpenAI format: { "messages": [{"role": "system", "content": "..."}] }
-	if messages, ok := msg["messages"].([]any); ok {
+	if messages, ok := msg["messages"].([]any); ok { //nolint:nestif // acceptable complexity for JSON type assertion chain
 		injected := false
 		for _, m := range messages {
 			if msgMap, ok := m.(map[string]any); ok {

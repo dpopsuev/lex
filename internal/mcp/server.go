@@ -15,6 +15,15 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+const sourceLocal = "local"
+
+// Structured logging key constants (sloglint no-raw-keys).
+const (
+	logKeyTool    = "tool"
+	logKeyElapsed = "elapsed"
+	logKeyError   = "error"
+)
+
 func NewServer(reg *registry.Registry, workspaceRoots []string, version string) *sdkmcp.Server {
 	srv := sdkmcp.NewServer(
 		&sdkmcp.Implementation{Name: "lex", Version: version},
@@ -75,34 +84,34 @@ type lexiconInput struct {
 	Budget     int      `json:"budget,omitempty" jsonschema:"max tokens for returned rules, 0=unlimited (resolve)"`
 }
 
-func (h *handler) handleLexicon(ctx context.Context, req *sdkmcp.CallToolRequest, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
+func (h *handler) handleLexicon(ctx context.Context, req *sdkmcp.CallToolRequest, in lexiconInput) (*sdkmcp.CallToolResult, any, error) { //nolint:gocritic // hugeParam: value semantics required by MCP SDK generic handler signature
 	switch in.Action {
 	case "resolve":
-		return h.doResolve(ctx, in)
+		return h.doResolve(ctx, &in)
 	case "search":
-		return h.doSearch(ctx, in)
+		return h.doSearch(ctx, &in)
 	case "inspect":
-		return h.doInspect(ctx, in)
+		return h.doInspect(ctx, &in)
 	case "add":
-		return h.doAdd(ctx, in)
+		return h.doAdd(ctx, &in)
 	case "remove":
-		return h.doRemove(ctx, in)
+		return h.doRemove(ctx, &in)
 	case "enable":
-		return h.doEnable(ctx, in)
+		return h.doEnable(ctx, &in)
 	case "disable":
-		return h.doDisable(ctx, in)
+		return h.doDisable(ctx, &in)
 	case "sync":
 		return h.doSync(ctx)
 	case "list":
 		return h.doList(ctx)
 	default:
-		return nil, nil, fmt.Errorf("unknown lexicon action %q (valid: resolve, search, inspect, add, remove, enable, disable, sync, list)", in.Action)
+		return nil, nil, fmt.Errorf("unknown lexicon action %q (valid: resolve, search, inspect, add, remove, enable, disable, sync, list)", in.Action) //nolint:err113 // user-facing error message
 	}
 }
 
-func (h *handler) doSearch(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
+func (h *handler) doSearch(ctx context.Context, in *lexiconInput) (*sdkmcp.CallToolResult, any, error) {
 	if in.Query == "" {
-		return nil, nil, fmt.Errorf("query is required for search")
+		return nil, nil, fmt.Errorf("query is required for search") //nolint:err113 // user-facing error message
 	}
 	matches, err := h.svc.Search(ctx, in.Query, in.Sources)
 	if err != nil {
@@ -111,14 +120,14 @@ func (h *handler) doSearch(ctx context.Context, in lexiconInput) (*sdkmcp.CallTo
 	return jsonResult(map[string]any{"query": in.Query, "count": len(matches), "matches": matches})
 }
 
-func (h *handler) doResolve(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
+func (h *handler) doResolve(ctx context.Context, in *lexiconInput) (*sdkmcp.CallToolResult, any, error) {
 	source := strings.ToLower(strings.TrimSpace(in.Source))
 	typ := strings.ToLower(strings.TrimSpace(in.Type))
 	if typ == "" {
 		typ = "all"
 	}
 
-	if source == "local" {
+	if source == sourceLocal {
 		switch typ {
 		case "rules":
 			rules, err := h.svc.GetRules(ctx, in.Path)
@@ -175,7 +184,7 @@ func (h *handler) doResolve(ctx context.Context, in lexiconInput) (*sdkmcp.CallT
 	return jsonResult(res)
 }
 
-func (h *handler) doInspect(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
+func (h *handler) doInspect(ctx context.Context, in *lexiconInput) (*sdkmcp.CallToolResult, any, error) {
 	artifacts, err := h.svc.InspectLexicon(ctx, in.URL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("inspect lexicon: %w", err)
@@ -183,9 +192,9 @@ func (h *handler) doInspect(ctx context.Context, in lexiconInput) (*sdkmcp.CallT
 	return jsonResult(artifacts)
 }
 
-func (h *handler) doAdd(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
+func (h *handler) doAdd(ctx context.Context, in *lexiconInput) (*sdkmcp.CallToolResult, any, error) {
 	if in.URL == "" {
-		return nil, nil, fmt.Errorf("url is required for add")
+		return nil, nil, fmt.Errorf("url is required for add") //nolint:err113 // user-facing error message
 	}
 	priority := in.Priority
 	if priority == 0 {
@@ -198,9 +207,9 @@ func (h *handler) doAdd(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolR
 	return jsonResult(src)
 }
 
-func (h *handler) doRemove(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
+func (h *handler) doRemove(ctx context.Context, in *lexiconInput) (*sdkmcp.CallToolResult, any, error) {
 	if in.URL == "" {
-		return nil, nil, fmt.Errorf("url is required for remove")
+		return nil, nil, fmt.Errorf("url is required for remove") //nolint:err113 // user-facing error message
 	}
 	if err := h.svc.RemoveLexicon(ctx, in.URL); err != nil {
 		return nil, nil, fmt.Errorf("remove lexicon: %w", err)
@@ -208,9 +217,9 @@ func (h *handler) doRemove(ctx context.Context, in lexiconInput) (*sdkmcp.CallTo
 	return jsonResult(map[string]string{"removed": in.URL})
 }
 
-func (h *handler) doEnable(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
+func (h *handler) doEnable(ctx context.Context, in *lexiconInput) (*sdkmcp.CallToolResult, any, error) {
 	if in.URL == "" {
-		return nil, nil, fmt.Errorf("url is required for enable")
+		return nil, nil, fmt.Errorf("url is required for enable") //nolint:err113 // user-facing error message
 	}
 	if err := h.svc.EnableSource(ctx, in.URL); err != nil {
 		return nil, nil, fmt.Errorf("enable source: %w", err)
@@ -218,9 +227,9 @@ func (h *handler) doEnable(ctx context.Context, in lexiconInput) (*sdkmcp.CallTo
 	return jsonResult(map[string]string{"enabled": in.URL})
 }
 
-func (h *handler) doDisable(ctx context.Context, in lexiconInput) (*sdkmcp.CallToolResult, any, error) {
+func (h *handler) doDisable(ctx context.Context, in *lexiconInput) (*sdkmcp.CallToolResult, any, error) {
 	if in.URL == "" {
-		return nil, nil, fmt.Errorf("url is required for disable")
+		return nil, nil, fmt.Errorf("url is required for disable") //nolint:err113 // user-facing error message
 	}
 	if err := h.svc.DisableSource(ctx, in.URL); err != nil {
 		return nil, nil, fmt.Errorf("disable source: %w", err)
@@ -247,12 +256,12 @@ func (h *handler) doList(ctx context.Context) (*sdkmcp.CallToolResult, any, erro
 func filterBySource(res *lexicon.Resolution, keepLocal bool) *lexicon.Resolution {
 	out := &lexicon.Resolution{}
 	for _, r := range res.Rules {
-		if (keepLocal && r.Source == "local") || (!keepLocal && r.Source != "local") {
+		if (keepLocal && r.Source == sourceLocal) || (!keepLocal && r.Source != sourceLocal) {
 			out.Rules = append(out.Rules, r)
 		}
 	}
 	for _, s := range res.Skills {
-		if (keepLocal && s.Source == "local") || (!keepLocal && s.Source != "local") {
+		if (keepLocal && s.Source == sourceLocal) || (!keepLocal && s.Source != sourceLocal) {
 			out.Skills = append(out.Skills, s)
 		}
 	}
@@ -277,14 +286,14 @@ func (h *handler) handleConfig(ctx context.Context, req *sdkmcp.CallToolRequest,
 		return jsonResult(cfg)
 	case "set":
 		if in.Key == "" {
-			return nil, nil, fmt.Errorf("key is required")
+			return nil, nil, fmt.Errorf("key is required") //nolint:err113 // user-facing error message
 		}
 		if err := h.svc.SetConfig(ctx, in.Key, in.Value); err != nil {
 			return nil, nil, fmt.Errorf("set config: %w", err)
 		}
 		return jsonResult(map[string]string{"ok": "config updated"})
 	default:
-		return nil, nil, fmt.Errorf("unknown config action %q (valid: get, set)", in.Action)
+		return nil, nil, fmt.Errorf("unknown config action %q (valid: get, set)", in.Action) //nolint:err113 // user-facing error message
 	}
 }
 
@@ -307,9 +316,9 @@ func noOut[In any](h func(context.Context, *sdkmcp.CallToolRequest, In) (*sdkmcp
 		result, out, err := h(ctx, req, in)
 		elapsed := time.Since(start)
 		if err != nil {
-			slog.Error("tool call failed", "tool", tool, "elapsed", elapsed, "error", err)
+			slog.LogAttrs(ctx, slog.LevelError, "tool call failed", slog.String(logKeyTool, tool), slog.Duration(logKeyElapsed, elapsed), slog.Any(logKeyError, err))
 		} else {
-			slog.Debug("tool call", "tool", tool, "elapsed", elapsed)
+			slog.LogAttrs(ctx, slog.LevelDebug, "tool call", slog.String(logKeyTool, tool), slog.Duration(logKeyElapsed, elapsed))
 		}
 		return result, out, err
 	}

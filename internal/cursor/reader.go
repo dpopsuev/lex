@@ -64,11 +64,11 @@ func ReadSkills(root string) ([]Skill, error) {
 		return nil, nil
 	}
 
-	var skills []Skill
 	entries, err := os.ReadDir(skillsDir)
 	if err != nil {
 		return nil, err
 	}
+	skills := make([]Skill, 0, len(entries))
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue

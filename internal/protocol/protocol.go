@@ -91,17 +91,17 @@ func (s *Service) InspectLexicon(_ context.Context, url string) ([]registry.Arti
 		return nil, err
 	}
 	var artifacts []registry.Artifact
-	for _, src := range sources {
-		if !src.Enabled {
+	for i := range sources {
+		if !sources[i].Enabled {
 			continue
 		}
-		if url != "" && src.URL != url {
+		if url != "" && sources[i].URL != url {
 			continue
 		}
-		artifacts = append(artifacts, registry.DiscoverArtifacts(src.LocalPath, src.URL, src.Priority)...)
+		artifacts = append(artifacts, registry.DiscoverArtifacts(sources[i].LocalPath, sources[i].URL, sources[i].Priority)...)
 	}
 	if url != "" && len(artifacts) == 0 {
-		return nil, fmt.Errorf("lexicon source not registered: %s", url)
+		return nil, fmt.Errorf("lexicon source not registered: %s", url) //nolint:err113 // user-facing error message
 	}
 	return artifacts, nil
 }
@@ -137,29 +137,29 @@ func (s *Service) Enrich(ctx context.Context, cwd string, opts EnrichOpts) (stri
 
 	// Collect rules from remote sources.
 	sources, _ := s.reg.Load()
-	for _, src := range sources {
-		if !src.Enabled {
+	for i := range sources {
+		if !sources[i].Enabled {
 			continue
 		}
-		cfg, _ := registry.LoadLexiconConfig(src.LocalPath)
-		effectivePriority := src.Priority
+		cfg, _ := registry.LoadLexiconConfig(sources[i].LocalPath)
+		effectivePriority := sources[i].Priority
 		if cfg != nil && cfg.Defaults.Priority > 0 {
 			effectivePriority = cfg.Defaults.Priority
 		}
-		artifacts := registry.DiscoverArtifacts(src.LocalPath, src.URL, effectivePriority)
-		for _, a := range artifacts {
-			body := readArtifactBody(a.Path)
+		artifacts := registry.DiscoverArtifacts(sources[i].LocalPath, sources[i].URL, effectivePriority)
+		for j := range artifacts {
+			body := readArtifactBody(artifacts[j].Path)
 			rr := rule.Rule{
-				Name:     a.Name,
-				Kind:     a.Type,
-				Source:   a.Source,
+				Name:     artifacts[j].Name,
+				Kind:     artifacts[j].Type,
+				Source:   artifacts[j].Source,
 				Adapter:  "remote",
 				Content:  body,
 				Scope:    "global",
-				Priority: a.Priority,
-				Labels:   a.Labels,
+				Priority: artifacts[j].Priority,
+				Labels:   artifacts[j].Labels,
 			}
-			for _, l := range a.Labels {
+			for _, l := range artifacts[j].Labels {
 				rr.Triggers = append(rr.Triggers, rule.Trigger{Type: rule.TriggerKeyword, Pattern: l})
 			}
 			localRules = append(localRules, rr)
@@ -211,27 +211,27 @@ func formatEnrichment(rules []rule.Rule, format string) string {
 	case "agents-md":
 		var sb strings.Builder
 		sb.WriteString("# Project Rules\n\n")
-		for _, r := range rules {
+		for i := range rules {
 			sb.WriteString("## ")
-			sb.WriteString(r.Name)
+			sb.WriteString(rules[i].Name)
 			sb.WriteString("\n\n")
-			sb.WriteString(r.Content)
+			sb.WriteString(rules[i].Content)
 			sb.WriteString("\n\n")
 		}
 		return strings.TrimSpace(sb.String())
 
 	case "gemini":
 		var sb strings.Builder
-		for _, r := range rules {
-			sb.WriteString(r.Content)
+		for i := range rules {
+			sb.WriteString(rules[i].Content)
 			sb.WriteString("\n\n")
 		}
 		return fmt.Sprintf(`{"content": %q}`, strings.TrimSpace(sb.String()))
 
 	default: // "text"
-		var parts []string
-		for _, r := range rules {
-			parts = append(parts, r.Content)
+		parts := make([]string, 0, len(rules))
+		for i := range rules {
+			parts = append(parts, rules[i].Content)
 		}
 		return strings.Join(parts, "\n\n---\n\n")
 	}

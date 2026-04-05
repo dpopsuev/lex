@@ -34,7 +34,7 @@ func (a *Adapter) Detect(root string) bool {
 }
 
 func (a *Adapter) Load(root string) ([]rule.Rule, error) {
-	var out []rule.Rule
+	out := make([]rule.Rule, 0, 1)
 
 	if data, err := os.ReadFile(filepath.Join(root, ".github", "copilot-instructions.md")); err == nil {
 		body := strings.TrimSpace(string(data))

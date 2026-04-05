@@ -23,9 +23,10 @@ func (a *Adapter) Detect(root string) bool {
 }
 
 func (a *Adapter) Load(root string) ([]rule.Rule, error) {
-	var out []rule.Rule
-
 	rules, _ := cursor.ReadRules(root)
+	skills, _ := cursor.ReadSkills(root)
+	out := make([]rule.Rule, 0, len(rules)+len(skills))
+
 	for _, r := range rules {
 		name := strings.TrimSuffix(filepath.Base(r.Path), filepath.Ext(r.Path))
 		rr := rule.Rule{
@@ -47,7 +48,6 @@ func (a *Adapter) Load(root string) ([]rule.Rule, error) {
 		out = append(out, rr)
 	}
 
-	skills, _ := cursor.ReadSkills(root)
 	for _, sk := range skills {
 		out = append(out, rule.Rule{
 			Name:     sk.Name,
