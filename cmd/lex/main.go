@@ -20,11 +20,11 @@ import (
 	_ "github.com/dpopsuev/lex/internal/adapter/copilot"
 	_ "github.com/dpopsuev/lex/internal/adapter/cursor"
 
-	"github.com/dpopsuev/lex/internal/lexicon"
 	lexmcp "github.com/dpopsuev/lex/internal/mcp"
 	"github.com/dpopsuev/lex/internal/protocol"
 	"github.com/dpopsuev/lex/internal/proxy"
-	"github.com/dpopsuev/lex/internal/registry"
+	"github.com/dpopsuev/ordo/lexicon"
+	"github.com/dpopsuev/ordo/registry"
 )
 
 var Version = "dev"

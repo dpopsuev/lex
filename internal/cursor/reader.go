@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dpopsuev/lex/internal/frontmatter"
+	"github.com/dpopsuev/ordo/frontmatter"
 )
 
 type Rule struct {
@@ -88,4 +88,3 @@ func ReadSkills(root string) ([]Skill, error) {
 	}
 	return skills, nil
 }
-

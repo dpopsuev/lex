@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dpopsuev/lex/internal/lexicon"
 	"github.com/dpopsuev/lex/internal/protocol"
-	"github.com/dpopsuev/lex/internal/registry"
-	"github.com/dpopsuev/lex/internal/rule"
+	"github.com/dpopsuev/ordo/lexicon"
+	"github.com/dpopsuev/ordo/registry"
+	"github.com/dpopsuev/ordo/rule"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

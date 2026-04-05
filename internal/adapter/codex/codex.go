@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dpopsuev/lex/internal/adapter"
-	"github.com/dpopsuev/lex/internal/rule"
+	"github.com/dpopsuev/ordo/adapter"
+	"github.com/dpopsuev/ordo/rule"
 )
 
 func init() { adapter.Register(&Adapter{}) }

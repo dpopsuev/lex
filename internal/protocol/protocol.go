@@ -6,12 +6,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dpopsuev/lex/internal/adapter"
 	"github.com/dpopsuev/lex/internal/config"
 	"github.com/dpopsuev/lex/internal/cursor"
-	"github.com/dpopsuev/lex/internal/lexicon"
-	"github.com/dpopsuev/lex/internal/registry"
-	"github.com/dpopsuev/lex/internal/rule"
+	"github.com/dpopsuev/ordo/adapter"
+	"github.com/dpopsuev/ordo/lexicon"
+	"github.com/dpopsuev/ordo/registry"
+	"github.com/dpopsuev/ordo/rule"
 )
 
 // Service encapsulates all Lex business logic.
