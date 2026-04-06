@@ -13,6 +13,7 @@ type Rule struct {
 	Description string   `json:"description,omitempty"`
 	AlwaysApply bool     `json:"always_apply,omitempty"`
 	Globs       []string `json:"globs,omitempty"`
+	Labels      []string `json:"labels,omitempty"`
 	Body        string   `json:"body"`
 }
 
@@ -51,6 +52,9 @@ func ReadRules(root string) ([]Rule, error) {
 		}
 		if g, ok := fm["globs"]; ok {
 			r.Globs = frontmatter.ParseYAMLList(g)
+		}
+		if labels := fm.Labels(); len(labels) > 0 {
+			r.Labels = labels
 		}
 		rules = append(rules, r)
 		return nil

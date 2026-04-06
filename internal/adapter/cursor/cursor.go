@@ -38,6 +38,7 @@ func (a *Adapter) Load(root string) ([]rule.Rule, error) {
 			Scope:    "project",
 			Priority: 50,
 			Globs:    r.Globs,
+			Labels:   r.Labels,
 		}
 		if r.AlwaysApply {
 			rr.Triggers = append(rr.Triggers, rule.Trigger{Type: rule.TriggerAlways})
