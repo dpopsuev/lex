@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/dpopsuev/battery v0.0.0-00010101000000-000000000000 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
@@ -19,3 +20,5 @@ require (
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 )
+
+replace github.com/dpopsuev/battery => ../battery
