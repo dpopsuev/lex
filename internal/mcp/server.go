@@ -28,31 +28,19 @@ func NewServer(reg *registry.Registry, workspaceRoots []string, version string) 
 	srv := sdkmcp.NewServer(
 		&sdkmcp.Implementation{Name: "lex", Version: version},
 		&sdkmcp.ServerOptions{
-			Instructions: "Lex is a provider-agnostic prompt enrichment engine for AI agents. " +
-				"It reads rules from multiple sources (.cursor/rules, CLAUDE.md, AGENTS.md, .github/copilot, remote repos) " +
-				"and merges them using priority-based cascading with context-aware scoring. " +
-				"Use the lexicon tool to resolve, inspect, and manage sources. " +
-				"Pass language, files, and keywords params for context-aware resolution. " +
-				"Use the config tool for global settings.",
+			Instructions: "Lex enriches prompts with rules and skills. Use lexicon resolve (with language/files/keywords) for context-aware enrichment.",
 		},
 	)
 	h := &handler{svc: protocol.New(reg, workspaceRoots)}
 
 	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name: "lexicon",
-		Description: "Resolve effective rules and skills by merging local .cursor/ with remote lexicons. " +
-			"Actions: resolve (merge local+remote with path/label filters), " +
-			"search (find rules/skills by substring query across loaded sources), " +
-			"inspect (list rules/skills/templates from registered sources), " +
-			"add (register remote repo), remove (delete source), " +
-			"enable/disable (toggle without removing), sync (re-fetch all), list (show sources).",
+		Name:        "lexicon",
+		Description: "Resolve, search, and manage rule/skill lexicons from local and remote sources.",
 	}, noOut(h.handleLexicon))
 
 	sdkmcp.AddTool(srv, &sdkmcp.Tool{
-		Name: "config",
-		Description: "Get or set global configuration. " +
-			"Actions: get (return current config), set (update a key). " +
-			"Keys: default_priority, cache_dir, enabled, labels (comma-separated).",
+		Name:        "config",
+		Description: "Get or set global Lex configuration.",
 	}, noOut(h.handleConfig))
 
 	return srv
@@ -66,22 +54,23 @@ type handler struct {
 
 type lexiconInput struct {
 	Action     string   `json:"action" jsonschema:"required,resolve | search | inspect | add | remove | enable | disable | sync | list"`
-	Path       string   `json:"path,omitempty" jsonschema:"workspace path for resolve context"`
+	Path       string   `json:"path,omitempty"`
 	Labels     []string `json:"labels,omitempty" jsonschema:"filter rules/skills by labels (resolve)"`
 	Filter     string   `json:"filter,omitempty" jsonschema:"glob pattern to filter files (resolve)"`
 	ActiveFile string   `json:"active_file,omitempty" jsonschema:"currently open file path for context-aware resolution"`
-	Context    []string `json:"context,omitempty" jsonschema:"additional context strings for resolution"`
+	Context    []string `json:"context,omitempty"`
 	Source     string   `json:"source,omitempty" jsonschema:"source filter: local, remote, or merged (default: merged)"`
 	Type       string   `json:"type,omitempty" jsonschema:"artifact type filter: rules, skills, or all (default: all)"`
 	URL        string   `json:"url,omitempty" jsonschema:"lexicon repository URL (add/remove/enable/disable/inspect)"`
 	Ref        string   `json:"ref,omitempty" jsonschema:"git ref to pin (add)"`
 	Priority   int      `json:"priority,omitempty" jsonschema:"source priority, higher wins on conflict (add)"`
-	Query      string   `json:"query,omitempty" jsonschema:"substring to search for across loaded lexicons (search)"`
+	Query      string   `json:"query,omitempty"`
 	Sources    []string `json:"sources,omitempty" jsonschema:"source names to search within (search, default: all)"`
 	Language   string   `json:"language,omitempty" jsonschema:"programming language for context-aware scoring (resolve)"`
-	Files      []string `json:"files,omitempty" jsonschema:"touched file paths for context-aware scoring (resolve)"`
-	Keywords   []string `json:"keywords,omitempty" jsonschema:"domain keywords for context-aware scoring (resolve)"`
+	Files      []string `json:"files,omitempty"`
+	Keywords   []string `json:"keywords,omitempty"`
 	Budget     int      `json:"budget,omitempty" jsonschema:"max tokens for returned rules, 0=unlimited (resolve)"`
+	Format     string   `json:"format,omitempty" jsonschema:"output format: full or summary (summary omits rule/skill body)"`
 }
 
 func (h *handler) handleLexicon(ctx context.Context, req *sdkmcp.CallToolRequest, in lexiconInput) (*sdkmcp.CallToolResult, any, error) { //nolint:gocritic // hugeParam: value semantics required by MCP SDK generic handler signature
@@ -174,6 +163,15 @@ func (h *handler) doResolve(ctx context.Context, in *lexiconInput) (*sdkmcp.Call
 
 	if source == "remote" {
 		res = filterBySource(res, false)
+	}
+	if in.Format == "summary" {
+		if typ == "rules" {
+			return jsonResult(map[string]any{"rules": summarizeRules(res.Rules)})
+		}
+		if typ == "skills" {
+			return jsonResult(map[string]any{"skills": summarizeSkills(res.Skills)})
+		}
+		return jsonResult(summarizeResolution(res))
 	}
 	if typ == "rules" {
 		return jsonResult(map[string]any{"rules": res.Rules})
@@ -272,8 +270,8 @@ func filterBySource(res *lexicon.Resolution, keepLocal bool) *lexicon.Resolution
 
 type configInput struct {
 	Action string `json:"action" jsonschema:"required,get | set"`
-	Key    string `json:"key,omitempty" jsonschema:"configuration key to update (set)"`
-	Value  string `json:"value,omitempty" jsonschema:"new value for the key (set)"`
+	Key    string `json:"key,omitempty"`
+	Value  string `json:"value,omitempty"`
 }
 
 func (h *handler) handleConfig(ctx context.Context, req *sdkmcp.CallToolRequest, in configInput) (*sdkmcp.CallToolResult, any, error) {
@@ -299,8 +297,50 @@ func (h *handler) handleConfig(ctx context.Context, req *sdkmcp.CallToolRequest,
 
 // --- helpers ---
 
+// ruleSummary is ResolvedRule without the Body field.
+type ruleSummary struct {
+	Name        string   `json:"name"`
+	Source      string   `json:"source"`
+	Priority    int      `json:"priority"`
+	Labels      []string `json:"labels,omitempty"`
+	AlwaysApply bool     `json:"always_apply,omitempty"`
+}
+
+// skillSummary is ResolvedSkill without the Body field.
+type skillSummary struct {
+	Name     string   `json:"name"`
+	Source   string   `json:"source"`
+	Priority int      `json:"priority"`
+	Labels   []string `json:"labels,omitempty"`
+}
+
+type resolutionSummary struct {
+	Rules  []ruleSummary  `json:"rules"`
+	Skills []skillSummary `json:"skills"`
+}
+
+func summarizeRules(rules []lexicon.ResolvedRule) []ruleSummary { //nolint:gocritic
+	out := make([]ruleSummary, len(rules))
+	for i, r := range rules {
+		out[i] = ruleSummary{Name: r.Name, Source: r.Source, Priority: r.Priority, Labels: r.Labels, AlwaysApply: r.AlwaysApply}
+	}
+	return out
+}
+
+func summarizeSkills(skills []lexicon.ResolvedSkill) []skillSummary { //nolint:gocritic
+	out := make([]skillSummary, len(skills))
+	for i, s := range skills {
+		out[i] = skillSummary{Name: s.Name, Source: s.Source, Priority: s.Priority, Labels: s.Labels}
+	}
+	return out
+}
+
+func summarizeResolution(res *lexicon.Resolution) resolutionSummary {
+	return resolutionSummary{Rules: summarizeRules(res.Rules), Skills: summarizeSkills(res.Skills)}
+}
+
 func jsonResult(data any) (*sdkmcp.CallToolResult, any, error) {
-	b, _ := json.MarshalIndent(data, "", "  ")
+	b, _ := json.Marshal(data)
 	return &sdkmcp.CallToolResult{
 		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: string(b)}},
 	}, nil, nil
