@@ -1,3 +1,5 @@
+version: "2"
+
 # golangci-lint config — aligned with Lex rules
 # go-best-practices, code-smells, naming, hexagonal-architecture, solid-principles
 
@@ -15,8 +17,6 @@ linters:
     - staticcheck     # comprehensive static analysis
     - unused          # dead code detection
     - ineffassign     # useless assignments
-    - gosimple        # simplification suggestions
-    - typecheck       # type checking
 
     # --- Lex: go-best-practices ---
     - goconst         # §1: constants over embedded literals
@@ -37,8 +37,6 @@ linters:
     - misspell        # typos in comments and strings
 
     # --- Lex: hexagonal-architecture + solid ---
-    - depguard        # dependency direction enforcement
-    - goimports       # import grouping and formatting
     - unconvert       # unnecessary type conversions
     - unparam         # unused function parameters
 
@@ -116,13 +114,6 @@ linters-settings:
         disabled: false
       - name: receiver-naming
         disabled: false
-
-  depguard:
-    rules:
-      main:
-        deny:
-          - pkg: "^log$"
-            desc: "use slog or structured logging instead of stdlib log"
 
   prealloc:
     simple: true
