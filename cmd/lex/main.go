@@ -24,6 +24,7 @@ import (
 	lexmcp "github.com/dpopsuev/lex/internal/mcp"
 	"github.com/dpopsuev/lex/internal/protocol"
 	"github.com/dpopsuev/lex/internal/proxy"
+	"github.com/dpopsuev/lex/internal/sink"
 	"github.com/dpopsuev/ordo/lexicon"
 	"github.com/dpopsuev/ordo/registry"
 )
@@ -106,6 +107,24 @@ Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config
 			roots = []string{cwd}
 		}
 		reg := registry.New(registry.DefaultRoot())
+
+		// Sync rules into Parchment if SCRIBE_ROOT is set — best-effort.
+		if scribeRoot := os.Getenv("SCRIBE_ROOT"); scribeRoot != "" {
+			if ps, err := sink.Open(scribeRoot); err != nil {
+				slog.Warn("parchment sink unavailable", slog.Any("error", err))
+			} else {
+				defer func() { _ = ps.Close() }() //nolint:gocritic // best-effort cleanup in serve command
+				cwd, _ := os.Getwd()
+				if res, err := lexicon.Resolve(context.Background(), reg, cwd, lexicon.ResolveOpts{}); err == nil {
+					ps.SyncResolution(context.Background(), res)
+					slog.Info("synced rules to parchment",
+						slog.Int("rules", len(res.Rules)),
+						slog.Int("skills", len(res.Skills)),
+						slog.String("root", scribeRoot))
+				}
+			}
+		}
+
 		srv := lexmcp.NewServer(reg, roots, Version)
 		if serveFlags.transport == "http" {
 			handler := sdkmcp.NewStreamableHTTPHandler(
