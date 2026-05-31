@@ -5,6 +5,7 @@ go 1.25.8
 require (
 	github.com/dpopsuev/battery v0.0.0-00010101000000-000000000000
 	github.com/dpopsuev/ordo v0.1.2
+	github.com/dpopsuev/parchment v0.11.2
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
@@ -12,7 +13,6 @@ require (
 
 require (
 	github.com/dominikbraun/graph v0.23.0 // indirect
-	github.com/dpopsuev/parchment v0.11.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
