@@ -14,15 +14,28 @@ import (
 	"github.com/dpopsuev/ordo/rule"
 )
 
+// ParchmentResolver is satisfied by *sink.ParchmentSink.
+// Defined here so protocol does not import internal/sink.
+type ParchmentResolver interface {
+	ResolveFromParchment(ctx context.Context, labels []string) *lexicon.Resolution
+}
+
 // Service encapsulates all Lex business logic.
 // Both CLI and MCP are thin wrappers around this.
 type Service struct {
 	reg        *registry.Registry
 	workspaces []string
+	parchment  ParchmentResolver // optional; set via SetParchmentResolver
 }
 
 func New(reg *registry.Registry, workspaces []string) *Service {
 	return &Service{reg: reg, workspaces: workspaces}
+}
+
+// SetParchmentResolver wires an optional Parchment-backed resolver.
+// When set, Resolve queries Parchment first and falls back to Ordo.
+func (s *Service) SetParchmentResolver(r ParchmentResolver) {
+	s.parchment = r
 }
 
 func (s *Service) GetRules(_ context.Context, path string) ([]cursor.Rule, error) {
@@ -80,6 +93,13 @@ func (s *Service) SetConfig(_ context.Context, key, value string) error {
 }
 
 func (s *Service) Resolve(ctx context.Context, path string, opts lexicon.ResolveOpts) (*lexicon.Resolution, error) {
+	// When a Parchment resolver is wired and labels are provided, query
+	// Parchment first. Fall back to Ordo if Parchment returns no results.
+	if s.parchment != nil && len(opts.Labels) > 0 {
+		if res := s.parchment.ResolveFromParchment(ctx, opts.Labels); res != nil {
+			return res, nil
+		}
+	}
 	return lexicon.Resolve(ctx, s.reg, s.resolvePath(path), opts)
 }
 

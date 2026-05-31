@@ -108,24 +108,20 @@ Tools: resolve_lexicon, inspect_lexicon, manage_lexicons, get_config, set_config
 		}
 		reg := registry.New(registry.DefaultRoot())
 
-		// Sync rules into Parchment if SCRIBE_ROOT is set — best-effort.
+		// Build base service; optionally wire Parchment if SCRIBE_ROOT is set.
+		svc := protocol.New(reg, roots)
 		if scribeRoot := os.Getenv("SCRIBE_ROOT"); scribeRoot != "" {
 			if ps, err := sink.Open(scribeRoot); err != nil {
 				slog.Warn("parchment sink unavailable", slog.Any("error", err))
 			} else {
 				defer func() { _ = ps.Close() }() //nolint:gocritic // best-effort cleanup in serve command
 				cwd, _ := os.Getwd()
-				if res, err := lexicon.Resolve(context.Background(), reg, cwd, lexicon.ResolveOpts{}); err == nil {
-					ps.SyncResolution(context.Background(), res)
-					slog.Info("synced rules to parchment",
-						slog.Int("rules", len(res.Rules)),
-						slog.Int("skills", len(res.Skills)),
-						slog.String("root", scribeRoot))
-				}
+				ps.SyncAll(context.Background(), reg, cwd)
+				svc.SetParchmentResolver(ps)
 			}
 		}
 
-		srv := lexmcp.NewServer(reg, roots, Version)
+		srv := lexmcp.NewServerWithService(svc, Version)
 		if serveFlags.transport == "http" {
 			handler := sdkmcp.NewStreamableHTTPHandler(
 				func(r *http.Request) *sdkmcp.Server { return srv },

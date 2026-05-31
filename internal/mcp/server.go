@@ -24,14 +24,17 @@ const (
 	logKeyError   = "error"
 )
 
-func NewServer(reg *registry.Registry, workspaceRoots []string, version string) *sdkmcp.Server {
+// NewServerWithService constructs an MCP server from a pre-built Service.
+// Use this when you need to wire optional components (e.g. ParchmentResolver)
+// before the server starts.
+func NewServerWithService(svc *protocol.Service, version string) *sdkmcp.Server {
 	srv := sdkmcp.NewServer(
 		&sdkmcp.Implementation{Name: "lex", Version: version},
 		&sdkmcp.ServerOptions{
 			Instructions: "Lex enriches prompts with rules and skills. Use lexicon resolve (with language/files/keywords) for context-aware enrichment.",
 		},
 	)
-	h := &handler{svc: protocol.New(reg, workspaceRoots)}
+	h := &handler{svc: svc}
 
 	sdkmcp.AddTool(srv, &sdkmcp.Tool{
 		Name:        "lexicon",
@@ -44,6 +47,11 @@ func NewServer(reg *registry.Registry, workspaceRoots []string, version string) 
 	}, noOut(h.handleConfig))
 
 	return srv
+}
+
+// NewServer constructs an MCP server from a registry.
+func NewServer(reg *registry.Registry, workspaceRoots []string, version string) *sdkmcp.Server {
+	return NewServerWithService(protocol.New(reg, workspaceRoots), version)
 }
 
 type handler struct {
